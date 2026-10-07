@@ -29,7 +29,7 @@ The web app only handles pages and quick actions. Slow work runs in Azure Contai
 
 ## Requirements
 
-The app is a Flask app with a `src/` layout, an application factory and blueprints; `uv` manages its dependencies.
+The app is a Flask app with a `src/` layout, an application factory and blueprints; `uv` manages dependencies. See the [Flask best-practices guide](https://github.com/rodekruis/python-knowledge-base/tree/main/flask) for project conventions.
 
 - Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
@@ -115,7 +115,10 @@ The Docker image serves the web app by default; jobs override the command with `
 
 To deploy to Azure Container Apps, fill in the settings at the top of [infra/deploy.cmd](infra/deploy.cmd) and run it from cmd after `az login`. It builds the image in Azure Container Registry, creates or updates one managed identity with its roles, the web app, the queue-triggered `hia-convert` and `hia-generate` jobs and the hourly `hia-cleanup` job. Run it again to deploy a new version, or pass an existing image tag to skip the build. Restrict access to the web app (Container Apps authentication or IP restrictions) before sharing its address.
 
-See the [Flask best-practices guide](https://github.com/rodekruis/python-knowledge-base/tree/main/flask) for project conventions.
+### CI/CD
+
+- [ci.yml](.github/workflows/ci.yml) runs the checks on every push and pull request.
+- [deploy-prod.yml](.github/workflows/deploy-prod.yml) runs on every push to `main` (or manually): it builds the image, pushes it to the container registry, points the three jobs and then the web app at it, and checks `/health`. It only updates images; `infra/deploy.cmd` creates the resources and changes settings.
 
 ## AI Disclaimer
 
