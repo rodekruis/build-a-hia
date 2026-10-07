@@ -1,8 +1,35 @@
-# Build a HIA
+# Build-a-HIA
 
-Turn source documents and web pages into a reviewable draft for a Helpful Information App (HIA). The app uses a `src/` layout, an application factory, blueprints, and `uv` for dependency management.
+A [Helpful Information App](https://github.com/rodekruis/helpful-information) (HIA) is a public website where a Red Cross or Red Crescent National Society tells people affected by a crisis which humanitarian services it offers and how to reach them. Its content lives in a Google Sheet with categories, sub-categories, offers (services) and questions with answers.
+
+Filling that sheet by hand from guidance documents, service lists and web pages takes days. **Build-a-HIA** drafts it with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
+
+## How it works
+
+1. **Context**: describe the crisis, target group, locations and the output language.
+2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
+3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve.
+4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap.
+5. **Review**: staff check each sub-category against the cited evidence, edit it and approve it. Gaps (missing, conflicting or outdated information, failed sources) get a status, a suggested action and a contact.
+6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
+
+Work happens in a temporary, anonymous session: there are no accounts, and all documents and drafts are deleted after 2 hours of inactivity or 24 hours at the latest.
+
+```mermaid
+flowchart LR
+    user([Staff]) --> web[Web app<br>Flask]
+    web -- sources, drafts, session state --> storage[(Azure Storage<br>tables, blobs, queues)]
+    storage -- convert queue --> convert[hia-convert job<br>Docling]
+    storage -- generate queue --> generate[hia-generate job]
+    generate --> model[Azure AI Foundry<br>language model]
+    cleanup[hia-cleanup job<br>hourly] --> storage
+```
+
+The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
 
 ## Requirements
+
+The app is a Flask app with a `src/` layout, an application factory and blueprints; `uv` manages its dependencies.
 
 - Python 3.12 or newer
 - [uv](https://docs.astral.sh/uv/)
