@@ -12,10 +12,10 @@
       {{ csrf(form) }}
       {{ field(form.country) }}
       {{ field(form.situation, "For example: floods in the north since March 2026.") }}
-      {{ field(form.target_group, "Who the HIA is for, such as people displaced from a specific area.") }}
+      {{ field(form.target_group, "Who HIA is for, such as people displaced from a specific area.") }}
       {{ field(form.locations, "Regions, cities or sites the information should cover.") }}
       <div class="field-row">
-        {{ field(form.output_language, "Type a language name in English or Dutch, or a language code such as “am” or “pt-BR”. Sets the HIA's #locale.language.") }}
+        {{ field(form.output_language, "Type a language name in English or Dutch, or a language code such as “am” or “pt-BR”. Sets HIA's #locale.language.") }}
         {{ field(form.locale_dir, "Sets #locale.dir. Right to left is used by default for Arabic, Farsi, Pashto, Urdu and similar languages.") }}
       </div>
       <datalist id="language-options">
