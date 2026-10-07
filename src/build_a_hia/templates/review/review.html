@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import steps %}
+
+{% block title %}Review | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="review-title">
+      {{ steps(5) }}
+      <h1 id="review-title">Review content</h1>
+      <p class="lead">
+        Approve each sub-category after checking its content against the evidence and for public
+        disclosure. Approving the structure did not approve the content.
+      </p>
+      {% if not plan.subcategories %}
+        <p class="warning">Approve the structure and generate content first.
+          <a href="{{ url_for('drafting.content') }}">Go to the content</a>.</p>
+      {% else %}
+        <p class="meta">{{ reviewed }} of {{ plan.subcategories | length }} reviewed. Sub-categories that still need review are listed first.</p>
+      {% endif %}
+      <ul class="source-list">
+        {% for sub in subcategories %}
+          <li class="source">
+            <div class="source-head">
+              <span class="ref">{{ sub.category }} ›</span>
+              <a class="source-title" href="{{ url_for('drafting.content_detail', key=sub.key) }}">{{ sub.name }}</a>
+              {% if sub.dropped %}
+                <span class="badge">Left out</span>
+              {% elif sub.approved %}
+                <span class="badge badge-done">Approved</span>
+              {% elif sub.status == "done" %}
+                <span class="badge badge-outdated">Needs review</span>
+              {% else %}
+                <span class="badge badge-failed">{{ sub.status | capitalize }}</span>
+              {% endif %}
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="panel" id="gaps" aria-labelledby="gaps-title">
+      <h2 id="gaps-title">Address gaps</h2>
+      <p class="lead">
+        Missing, conflicting or uncertain information, and sources that could not be read.
+        Unresolved gaps do not block the download; they are listed in the internal review workbook.
+      </p>
+      {% if gaps %}
+        <p class="meta">{{ plan.open_gaps }} of {{ gaps | length }} open. Open gaps are listed first.</p>
+        <ul class="source-list">
+          {% set on_overview = true %}
+          {% for gap in gaps %}
+            {% include "review/_gap.html" %}
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="success">No gaps found.</p>
+      {% endif %}
+      <div class="actions">
+        <a class="button" href="{{ url_for('review.download') }}">Continue to download</a>
+      </div>
+    </section>
+  </div>
+{% endblock %}

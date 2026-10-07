@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import steps %}
+{% from "drafting/_macros.html" import hidden, node_button, rename_form, target_form %}
+
+{% block title %}Structure | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="structure-title">
+      {{ steps(3) }}
+      <h1 id="structure-title">Review the structure</h1>
+      <p class="lead">
+        The AI proposes categories and sub-categories from all approved sources. Rename, reorder,
+        move, merge, add or remove items until the structure fits, then approve it.
+      </p>
+      {% if outdated %}
+        <p class="warning">
+          The sources or context changed after this structure was proposed. Check that it still fits,
+          or ask the AI to revise it.
+        </p>
+      {% endif %}
+      {% if state.approved %}
+        <p class="success">
+          This version is approved. Editing creates a new version that needs approval again;
+          content generated from older versions is marked outdated.
+        </p>
+        <div class="actions">
+          <a class="button" href="{{ url_for('drafting.content') }}">Continue to content</a>
+        </div>
+      {% endif %}
+    </section>
+
+    {% include "drafting/_structure_status.html" %}
+
+    {% if draft %}
+      <section class="panel" aria-labelledby="draft-title">
+        <h2 id="draft-title">Draft structure <span class="meta">(version {{ state.version }})</span></h2>
+        {% if state.notes %}
+          <p class="notice"><strong>Notes from the AI:</strong> {{ state.notes }}</p>
+        {% endif %}
+        {% for problem in problems %}
+          <p class="warning">{{ problem }}</p>
+        {% endfor %}
+
+        {% set category_options = [] %}
+        {% for category in draft.categories %}{% set _ = category_options.append((category.key, category.name)) %}{% endfor %}
+        {% set sub_options = [] %}
+        {% for category in draft.categories %}{% for sub in category.children %}{% set _ = sub_options.append((sub.key, category.name ~ " › " ~ sub.name)) %}{% endfor %}{% endfor %}
+
+        <ol class="tree">
+          {% for category in draft.categories %}
+            <li class="tree-category" id="node-{{ category.key }}">
+              <div class="tree-head">
+                <h3>{{ category.name }}</h3>
+                <span class="meta">{{ category.children | length }} sub-categor{{ "y" if category.children | length == 1 else "ies" }}</span>
+              </div>
+              {% if category.description %}<p class="meta">{{ category.description }}</p>{% endif %}
+              <details class="tree-edit">
+                <summary>Edit category</summary>
+                {{ rename_form(category, state.version) }}
+                <div class="source-actions">
+                  {% if not loop.first %}{{ node_button('drafting.move_node', 'Move up', state.version, category.key, {'direction': 'up'}) }}{% endif %}
+                  {% if not loop.last %}{{ node_button('drafting.move_node', 'Move down', state.version, category.key, {'direction': 'down'}) }}{% endif %}
+                  {{ node_button('drafting.remove_node', 'Remove with its sub-categories', state.version, category.key) }}
+                </div>
+                {{ target_form('drafting.merge_nodes', category, state.version, 'Merge into', category_options | rejectattr('0', 'equalto', category.key) | list, 'Preview merge') }}
+              </details>
+
+              <ol class="tree-children">
+                {% for sub in category.children %}
+                  <li id="node-{{ sub.key }}">
+                    <strong>{{ sub.name }}</strong>
+                    {% if sub.chunk_ids %}<span class="meta">· {{ sub.chunk_ids | length }} linked passages</span>{% endif %}
+                    {% if sub.description %}<p class="meta">{{ sub.description }}</p>{% endif %}
+                    <details class="tree-edit">
+                      <summary>Edit sub-category</summary>
+                      {{ rename_form(sub, state.version) }}
+                      <div class="source-actions">
+                        {% if not loop.first %}{{ node_button('drafting.move_node', 'Move up', state.version, sub.key, {'direction': 'up'}) }}{% endif %}
+                        {% if not loop.last %}{{ node_button('drafting.move_node', 'Move down', state.version, sub.key, {'direction': 'down'}) }}{% endif %}
+                        {{ node_button('drafting.remove_node', 'Remove', state.version, sub.key) }}
+                      </div>
+                      {{ target_form('drafting.move_to', sub, state.version, 'Move to category', category_options | rejectattr('0', 'equalto', category.key) | list, 'Move') }}
+                      {{ target_form('drafting.merge_nodes', sub, state.version, 'Merge into', sub_options | rejectattr('0', 'equalto', sub.key) | list, 'Preview merge') }}
+                    </details>
+                  </li>
+                {% endfor %}
+              </ol>
+              <details class="tree-edit">
+                <summary>Add a sub-category to “{{ category.name }}”</summary>
+                <form method="post" action="{{ url_for('drafting.add_node') }}">
+                  {{ hidden(state.version) }}
+                  <input type="hidden" name="parent" value="{{ category.key }}">
+                  <div class="field">
+                    <label for="add-name-{{ category.key }}">Name</label>
+                    <input type="text" id="add-name-{{ category.key }}" name="name" maxlength="80" required>
+                  </div>
+                  <div class="field">
+                    <label for="add-description-{{ category.key }}">Description</label>
+                    <textarea id="add-description-{{ category.key }}" name="description" maxlength="1000"></textarea>
+                  </div>
+                  <button type="submit" class="button secondary">Add sub-category</button>
+                </form>
+              </details>
+            </li>
+          {% endfor %}
+        </ol>
+
+        <details class="tree-edit">
+          <summary>Add a category</summary>
+          <form method="post" action="{{ url_for('drafting.add_node') }}">
+            {{ hidden(state.version) }}
+            <div class="field">
+              <label for="add-category-name">Name</label>
+              <input type="text" id="add-category-name" name="name" maxlength="80" required>
+            </div>
+            <div class="field">
+              <label for="add-category-description">Description</label>
+              <textarea id="add-category-description" name="description" maxlength="1000"></textarea>
+            </div>
+            <button type="submit" class="button secondary">Add category</button>
+          </form>
+        </details>
+
+        <div class="readiness" id="approve">
+          <h3>Approve this structure</h3>
+          <p class="hint">
+            Approving freezes this version. Offers and questions are then generated for each
+            sub-category. Approving the structure does not approve the content.
+          </p>
+          {% if state.approved %}
+            <p class="success">Version {{ state.version }} is approved.</p>
+          {% elif problems %}
+            <p class="warning">Fix the problems above before approving.</p>
+          {% elif state.job_active %}
+            <p class="meta">Wait until the AI has finished.</p>
+          {% else %}
+            <form method="post" action="{{ url_for('drafting.approve_structure') }}">
+              {{ hidden(state.version) }}
+              <button type="submit" class="button">Approve structure</button>
+            </form>
+          {% endif %}
+        </div>
+      </section>
+    {% endif %}
+  </div>
+{% endblock %}

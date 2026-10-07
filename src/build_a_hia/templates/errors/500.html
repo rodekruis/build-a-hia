@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Server error | Build a HIA{% endblock %}
+
+{% block content %}
+  <section class="welcome">
+    <p class="eyebrow">500</p>
+    <h1>Something went wrong</h1>
+    <p class="intro">The request could not be completed. Please try again later.</p>
+    <a href="{{ url_for('main.index') }}">Return home</a>
+  </section>
+{% endblock %}

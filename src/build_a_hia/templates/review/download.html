@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import steps %}
+
+{% block title %}Download | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="download-title">
+      {{ steps(6) }}
+      <h1 id="download-title">Download</h1>
+      <p class="lead">
+        Two separate workbooks from the same snapshot: <strong>hia.xlsx</strong> to copy into a
+        fresh HIA template, and <strong>review-internal.xlsx</strong> with gaps, evidence and
+        sources for internal handover. Nothing is published automatically.
+      </p>
+
+      {% if plan.blockers %}
+        <h2>Before you can download</h2>
+        <ul>
+          {% for blocker in plan.blockers %}<li class="error">{{ blocker }}</li>{% endfor %}
+        </ul>
+        <p><a href="{{ url_for('review.overview') }}">Go back to review</a></p>
+      {% else %}
+        {% for warning in plan.warnings %}<p class="warning">{{ warning }}</p>{% endfor %}
+        <p class="meta">
+          {{ plan.open_gaps }} open gap{{ "s" if plan.open_gaps != 1 }} will be listed in the internal review workbook.
+        </p>
+        <form method="post" action="{{ url_for('review.create_download') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button type="submit" class="button">{{ "Create new downloads" if latest else "Create downloads" }}</button>
+        </form>
+      {% endif %}
+    </section>
+
+    {% if latest %}
+      <section class="panel" aria-labelledby="files-title">
+        <h2 id="files-title">Latest snapshot</h2>
+        <p class="meta">Snapshot {{ latest.snapshot }}, created {{ latest.exported_at[:16].replace("T", " ") }} UTC.</p>
+        <ul class="source-list">
+          <li class="source">
+            <a href="{{ url_for('review.download_file', snapshot=latest.snapshot, name=names[0]) }}">Download hia.xlsx</a>
+            <p class="meta">For publication after review. Contains only the template's eight tabs; every row has visibility “Hide”.</p>
+          </li>
+          <li class="source">
+            <a href="{{ url_for('review.download_file', snapshot=latest.snapshot, name=names[1]) }}">Download review-internal.xlsx</a>
+            <p class="meta">Internal only: gaps, evidence and sources. Never copy it into a live HIA sheet. Store it securely.</p>
+          </li>
+        </ul>
+      </section>
+    {% endif %}
+
+    <section class="panel" aria-labelledby="copy-title">
+      <h2 id="copy-title">Copying into the HIA</h2>
+      <ol>
+        <li>Make a fresh copy of the HIA template. Do not paste into an HIA that already has content.</li>
+        <li>In Categories, Sub-Categories, Offers and Q&amp;As, copy rows 3 and below from hia.xlsx and paste them into the same rows of the template using <em>Paste special › Values only</em>.</li>
+        <li>In Referral Page, copy only the filled values in column B (text direction, language, last updated).</li>
+        <li>Review everything for public disclosure before changing any visibility to “Show”. Hidden rows are still public.</li>
+      </ol>
+      <p class="hint">Template contract: {{ template_version }}. IDs start at 2 because row 2 is the template's hidden scaffolding row.</p>
+    </section>
+  </div>
+{% endblock %}

@@ -1,0 +1,70 @@
+<section class="panel" id="content-status"
+         data-poll-url="{{ url_for('drafting.content_status') }}"
+         data-poll-active="{{ 'true' if active else 'false' }}">
+  <h2>Sub-categories</h2>
+  <div aria-live="polite">
+    {% set labels = {
+      "missing": "Not generated",
+      "queued": "Queued",
+      "running": "Generating",
+      "done": "Generated",
+      "failed": "Failed",
+      "outdated": "Outdated",
+    } %}
+    {% if active %}
+      <p class="meta">Generating in the background. This list updates automatically.</p>
+    {% endif %}
+    <ul class="source-list">
+      {% for row in rows %}
+        <li class="source">
+          <div class="source-head">
+            <span class="ref">{{ row.category.name }} ›</span>
+            {% if row.state and row.state.blob %}
+              <a class="source-title" href="{{ url_for('drafting.content_detail', key=row.subcategory.key) }}">{{ row.subcategory.name }}</a>
+            {% else %}
+              <span class="source-title">{{ row.subcategory.name }}</span>
+            {% endif %}
+            <span class="badge badge-{{ row.status }}">{{ labels[row.status] }}</span>
+            {% if row.state and row.state.approved %}
+              <span class="badge badge-done">{{ "Left out" if row.state.empty_decision == "drop" else "Approved" }}</span>
+            {% elif row.state and row.state.edited %}
+              <span class="badge badge-edited">Edited</span>
+            {% endif %}
+          </div>
+          {% if row.state and row.state.blob %}
+            <p class="meta">
+              {{ row.state.offers }} offer{{ "s" if row.state.offers != 1 }},
+              {{ row.state.questions }} question{{ "s" if row.state.questions != 1 }},
+              {{ row.state.issues }} issue{{ "s" if row.state.issues != 1 }} to review
+            </p>
+          {% endif %}
+          {% if row.status == "failed" and row.state.error %}
+            <p class="error">{{ row.state.error }}</p>
+          {% endif %}
+          {% if row.status == "outdated" %}
+            <p class="warning">Generated from an older structure, sources or context.</p>
+          {% endif %}
+          {% if row.status in ("done", "failed", "outdated") and model_ready %}
+            <div class="source-actions">
+              <form method="post" action="{{ url_for('drafting.regenerate_content', key=row.subcategory.key) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="button secondary">Regenerate</button>
+              </form>
+            </div>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+    {% if generated and not active %}
+      <div class="source-actions">
+        <a class="button" href="{{ url_for('review.overview') }}">Continue to review</a>
+      </div>
+      {% if pending %}
+        <p class="hint">
+          {{ pending }} sub-categor{{ "y" if pending == 1 else "ies" }} still need{{ "s" if pending == 1 }}
+          content; the download stays blocked until {{ "it is" if pending == 1 else "they are" }} generated.
+        </p>
+      {% endif %}
+    {% endif %}
+  </div>
+</section>

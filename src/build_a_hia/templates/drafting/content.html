@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import steps %}
+
+{% block title %}Content | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="content-title">
+      {{ steps(4) }}
+      <h1 id="content-title">Generate offers and questions</h1>
+      <p class="lead">
+        Each sub-category is written separately from all approved sources. Every fact must cite a
+        source passage; unsupported details are left blank and listed as issues to review.
+      </p>
+      {% if not approved %}
+        <p class="warning">
+          Approve the structure first. <a href="{{ url_for('drafting.structure') }}">Go to the structure</a>.
+        </p>
+      {% elif not workspace.sources_approved %}
+        <p class="warning">
+          The sources changed. <a href="{{ url_for('workspace.sources', _anchor='readiness') }}">Approve them again</a>
+          before generating content.
+        </p>
+      {% elif not model_ready %}
+        <p class="warning">The AI model is not configured. Set FOUNDRY_ENDPOINT and FOUNDRY_DEPLOYMENT.</p>
+      {% else %}
+        {% if pending %}
+          <form method="post" action="{{ url_for('drafting.generate_content') }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="button">
+              Generate content for {{ pending }} sub-categor{{ "y" if pending == 1 else "ies" }}
+            </button>
+          </form>
+        {% elif not active %}
+          <p class="success">All sub-categories have current content.</p>
+        {% endif %}
+      {% endif %}
+      {% set used = workspace.model_tokens_used %}
+      {% set limit = settings.max_session_model_tokens %}
+    </section>
+
+    {% if approved %}
+      {% include "drafting/_content_status.html" %}
+    {% endif %}
+  </div>
+{% endblock %}

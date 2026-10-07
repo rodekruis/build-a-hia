@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Request expired | Build a HIA{% endblock %}
+
+{% block content %}
+  <section class="welcome">
+    <p class="eyebrow">400</p>
+    <h1>Please try again</h1>
+    <p class="intro">The form expired or was incomplete. Go back, reload the page and submit it again.</p>
+    <a href="{{ url_for('workspace.sources') }}">Return to your sources</a>
+  </section>
+{% endblock %}

@@ -1,0 +1,58 @@
+{% macro hidden(version, key="") -%}
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <input type="hidden" name="version" value="{{ version }}">
+  {% if key %}<input type="hidden" name="key" value="{{ key }}">{% endif %}
+{%- endmacro %}
+
+{% macro node_button(endpoint, label, version, key, kwargs={}) -%}
+  <form method="post" action="{{ url_for(endpoint, **kwargs) }}" class="inline-form">
+    {{ hidden(version, key) }}
+    <button type="submit" class="button secondary">{{ label }}</button>
+  </form>
+{%- endmacro %}
+
+{% macro rename_form(node, version) -%}
+  <form method="post" action="{{ url_for('drafting.rename_node') }}">
+    {{ hidden(version, node.key) }}
+    <div class="field">
+      <label for="name-{{ node.key }}">Name</label>
+      <input type="text" id="name-{{ node.key }}" name="name" value="{{ node.name }}" maxlength="80" required>
+    </div>
+    <div class="field">
+      <label for="description-{{ node.key }}">Description</label>
+      <textarea id="description-{{ node.key }}" name="description" maxlength="1000">{{ node.description }}</textarea>
+    </div>
+    <button type="submit" class="button secondary">Save</button>
+  </form>
+{%- endmacro %}
+
+{% macro target_form(endpoint, node, version, label, options, button) -%}
+  {% if options %}
+    <form method="post" action="{{ url_for(endpoint) }}" class="inline-form">
+      {{ hidden(version, node.key) }}
+      <label for="{{ endpoint | replace('.', '-') }}-{{ node.key }}">{{ label }}</label>
+      <select id="{{ endpoint | replace('.', '-') }}-{{ node.key }}" name="target">
+        {% for value, text in options %}<option value="{{ value }}">{{ text }}</option>{% endfor %}
+      </select>
+      <button type="submit" class="button secondary">{{ button }}</button>
+    </form>
+  {% endif %}
+{%- endmacro %}
+
+{% macro evidence_list(evidence) -%}
+  {% if evidence %}
+    <details class="evidence">
+      <summary>Evidence ({{ evidence | length }})</summary>
+      <ul>
+        {% for item in evidence %}
+          <li>
+            <strong>{{ item.source_ref }}</strong>
+            {% if item.page %}{{ "sheet " ~ item.sheet if item.sheet else "page " ~ item.page }}{% endif %}
+            · {{ item.source_title }}
+            <blockquote>{{ item.passage }}</blockquote>
+          </li>
+        {% endfor %}
+      </ul>
+    </details>
+  {% endif %}
+{%- endmacro %}

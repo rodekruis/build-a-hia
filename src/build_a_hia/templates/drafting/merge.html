@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "drafting/_macros.html" import hidden %}
+
+{% block title %}Merge preview | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="merge-title">
+      <p><a href="{{ url_for('drafting.structure') }}">Back to the structure</a></p>
+      <h1 id="merge-title">Merge “{{ source.name }}” into “{{ result.name }}”?</h1>
+      <p class="lead">“{{ source.name }}” will be removed. This is the result:</p>
+      <h2>{{ result.name }}</h2>
+      {% if result.description %}<p class="context-summary">{{ result.description }}</p>{% endif %}
+      {% if result.children %}
+        <p>Sub-categories after the merge:</p>
+        <ul>
+          {% for child in result.children %}<li>{{ child.name }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      <form method="post" action="{{ url_for('drafting.merge_nodes') }}">
+        {{ hidden(version, source.key) }}
+        <input type="hidden" name="target" value="{{ target_key }}">
+        <input type="hidden" name="confirm" value="y">
+        <div class="actions">
+          <button type="submit" class="button">Merge</button>
+          <a class="button secondary" href="{{ url_for('drafting.structure') }}">Cancel</a>
+        </div>
+      </form>
+    </section>
+  </div>
+{% endblock %}

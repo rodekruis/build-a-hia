@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Build-a-HIA{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/site.css') }}">
+    <script src="{{ url_for('static', filename='js/poll.js') }}" defer></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="{{ url_for('main.index') }}">Build-a-HIA</a>
+      <span class="tagline">Helpful Information App</span>
+    </header>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes" role="status">
+          {% for category, message in messages %}
+            <p class="flash flash-{{ category }}">{{ message }}</p>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>

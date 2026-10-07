@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import csrf, field, steps %}
+
+{% block title %}Sources | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="sources-title">
+      {{ steps(2) }}
+      <h1 id="sources-title">Add sources</h1>
+      <p class="lead">
+        Add the documents and web pages that HIA should be based on. Each source must be converted
+        to text before proceeding and this may take a few minutes. It happens in the background; 
+        you can keep working in the meanwhile.
+      </p>
+      <p class="notice">
+        This session and all its content are deleted at {{ expires_at.strftime("%H:%M UTC on %d %b %Y") }}
+        at the latest, sooner if you are inactive for {{ settings.session_idle_seconds // 3600 }} hours.
+      </p>
+    </section>
+
+    <section class="panel" id="add-files" aria-labelledby="files-title">
+      <h2 id="files-title">Upload files</h2>
+      <p class="hint">
+        PDF, DOCX, XLSX or images (PNG, JPEG, TIFF, BMP, WebP). Up to
+        {{ settings.max_file_bytes // (1024 * 1024) }} MB per file,
+        {{ settings.max_document_pages }} pages per document and
+        {{ settings.max_sources }} sources per session. Password-protected files are not supported.
+      </p>
+      <form method="post" action="{{ url_for('workspace.upload_files') }}" enctype="multipart/form-data">
+        {{ csrf(upload_form) }}
+        <div class="field">
+          {{ upload_form.files.label }}
+          {{ upload_form.files(accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp") }}
+        </div>
+        <div class="actions">
+          <button type="submit" class="button">Upload</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="panel" id="add-url" aria-labelledby="url-title">
+      <h2 id="url-title">Add a web page or document link</h2>
+      <p class="hint">
+        Only the page or file at this address is fetched; links on it are not followed. Add each
+        page separately. Pages that need JavaScript, a login or bot checks are not supported:
+        upload the document or a saved PDF instead.
+      </p>
+      <form method="post" action="{{ url_for('workspace.add_url') }}" novalidate>
+        {{ csrf(url_form) }}
+        {{ field(url_form.url) }}
+        <div class="actions">
+          <button type="submit" class="button">Add address</button>
+        </div>
+      </form>
+    </section>
+
+    {% include "workspace/_status.html" %}
+
+    <section class="panel danger-zone" aria-labelledby="delete-title">
+      <h2 id="delete-title">Delete this session</h2>
+      <p class="hint">Deletes the context, all sources and converted text now. This cannot be undone.</p>
+      <form method="post" action="{{ url_for('workspace.delete_session') }}">
+        {{ csrf(delete_form) }}
+        <button type="submit" class="button danger">Delete session</button>
+      </form>
+    </section>
+  </div>
+{% endblock %}

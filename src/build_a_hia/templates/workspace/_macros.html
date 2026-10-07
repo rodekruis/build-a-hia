@@ -1,0 +1,40 @@
+{% macro csrf(form) %}
+  {%- if form.csrf_token is defined %}{{ form.csrf_token(id=False) }}{% endif -%}
+{% endmacro %}
+
+{% macro field(f, hint="") %}
+  <div class="field{% if f.errors %} has-error{% endif %}">
+    {{ f.label }}
+    {% if hint %}
+      <p class="hint" id="{{ f.id }}-hint">{{ hint }}</p>
+      {{ f(aria_describedby=f.id ~ "-hint") }}
+    {% else %}
+      {{ f() }}
+    {% endif %}
+    {% for error in f.errors %}
+      <p class="error">{{ error }}</p>
+    {% endfor %}
+  </div>
+{% endmacro %}
+
+{% macro steps(current) %}
+  <ol class="steps" aria-label="Progress">
+    {% for number, label, endpoint in [
+      (1, "Context", "workspace.context"),
+      (2, "Sources", "workspace.sources"),
+      (3, "Structure", "drafting.structure"),
+      (4, "Content", "drafting.content"),
+      (5, "Review", "review.overview"),
+      (6, "Download", "review.download"),
+    ] %}
+      <li class="{{ 'current' if number == current else '' }}"
+          {% if number == current %}aria-current="step"{% endif %}>
+        {% if number == current %}{{ label }}{% else %}<a href="{{ url_for(endpoint) }}">{{ label }}</a>{% endif %}
+      </li>
+    {% endfor %}
+  </ol>
+{% endmacro %}
+
+{% macro status_badge(source) %}
+  <span class="badge badge-{{ source.status.value }}">{{ source.status.value | capitalize }}</span>
+{% endmacro %}

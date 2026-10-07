@@ -1,0 +1,40 @@
+<li class="source" id="gap-{{ gap.id }}">
+  <div class="source-head">
+    {% if on_overview %}
+      <span class="ref">{{ gap.group }} ›</span>
+    {% endif %}
+    <span class="badge badge-{{ 'done' if gap.status != 'open' else 'failed' }}">{{ gap.status_label }}</span>
+    <strong>{{ gap.kind_label }}</strong>
+    {% if gap.item %}<span class="meta">· {{ gap.item_type }} {{ gap.item }}</span>{% endif %}
+    {% if gap.field %}<span class="meta">· {{ gap.field }}</span>{% endif %}
+  </div>
+  <p>{{ gap.issue }}</p>
+  {% if gap.source_reference %}<p class="meta">Sources: {{ gap.source_reference }}</p>{% endif %}
+  <details class="tree-edit">
+    <summary>Update gap</summary>
+    <form method="post" action="{{ url_for('review.update_gap', gap_id=gap.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="back" value="{{ '' if on_overview else gap.subcategory_key }}">
+      <div class="field-row">
+        <div class="field">
+          <label for="status-{{ gap.id }}">Status</label>
+          <select id="status-{{ gap.id }}" name="status">
+            {% for value, label in gap_form.status.choices %}
+              <option value="{{ value }}" {% if value == gap.status %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="field">
+          <label for="contact-{{ gap.id }}">Suggested contact</label>
+          <input type="text" id="contact-{{ gap.id }}" name="suggested_contact" maxlength="200" value="{{ gap.suggested_contact }}">
+        </div>
+      </div>
+      <div class="field">
+        <label for="action-{{ gap.id }}">Suggested action</label>
+        <textarea id="action-{{ gap.id }}" name="suggested_action" maxlength="500">{{ gap.suggested_action }}</textarea>
+      </div>
+      <p class="hint">Leave the contact blank unless the sources name one; the National Society assigns owners.</p>
+      <button type="submit" class="button secondary">Save</button>
+    </form>
+  </details>
+</li>

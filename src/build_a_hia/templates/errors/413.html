@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+
+{% block title %}Upload too large | Build a HIA{% endblock %}
+
+{% block content %}
+  <section class="welcome">
+    <p class="eyebrow">413</p>
+    <h1>Upload too large</h1>
+    <p class="intro">The files you sent together are too large. Upload fewer or smaller files at a time.</p>
+    <a href="{{ url_for('workspace.sources') }}">Return to your sources</a>
+  </section>
+{% endblock %}

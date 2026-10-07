@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import csrf, field, steps %}
+
+{% block title %}Context | Build a HIA{% endblock %}
+
+{% block content %}
+  <section class="panel" aria-labelledby="context-title">
+    {{ steps(1) }}
+    <h1 id="context-title">Describe the situation</h1>
+    <p class="lead">This context is included in every request to the AI model, so be specific.</p>
+    <form method="post" action="{{ url_for('workspace.context') }}" novalidate>
+      {{ csrf(form) }}
+      {{ field(form.country) }}
+      {{ field(form.situation, "For example: floods in the north since March 2026.") }}
+      {{ field(form.target_group, "Who the HIA is for, such as people displaced from a specific area.") }}
+      {{ field(form.locations, "Regions, cities or sites the information should cover.") }}
+      <div class="field-row">
+        {{ field(form.output_language, "Type a language name in English or Dutch, or a language code such as “am” or “pt-BR”. Sets the HIA's #locale.language.") }}
+        {{ field(form.locale_dir, "Sets #locale.dir. Right to left is used by default for Arabic, Farsi, Pashto, Urdu and similar languages.") }}
+      </div>
+      <datalist id="language-options">
+        {% for language in languages | sort(attribute="name") %}
+          <option value="{{ language.name }}">{{ language.dutch }} · {{ language.code }}</option>
+        {% endfor %}
+      </datalist>
+      {{ field(form.source_languages, "For example: Ukrainian, English.") }}
+      {{ field(form.reference_date, "Optional. Information should be valid on this date.") }}
+      <div class="actions">
+        <button type="submit" class="button">{{ "Save and continue" if workspace and workspace.context else "Start session" }}</button>
+      </div>
+    </form>
+    {% if not workspace %}
+      <p class="hint">
+        Starting creates a temporary session stored with a cookie in this browser. It is deleted
+        automatically; there is no recovery from other devices.
+      </p>
+    {% endif %}
+  </section>
+{% endblock %}

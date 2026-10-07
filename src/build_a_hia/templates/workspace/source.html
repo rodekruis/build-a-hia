@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "workspace/_macros.html" import csrf, field, status_badge %}
+
+{% block title %}{{ source.reference }} | Build a HIA{% endblock %}
+
+{% block content %}
+  <div class="workspace">
+    <section class="panel" aria-labelledby="source-title">
+      <p><a href="{{ url_for('workspace.sources') }}">Back to sources</a></p>
+      <h1 id="source-title">{{ source.reference }}: {{ source.title or source.url }}</h1>
+      <p>{{ status_badge(source) }}</p>
+      <dl class="context-summary">
+        <dt>Type</dt><dd>{{ (source.format | format_label) or "Web address" }}</dd>
+        {% if source.filename %}<dt>File name</dt><dd>{{ source.filename }}</dd>{% endif %}
+        {% if source.url %}<dt>Address</dt><dd class="wrap">{{ source.url }}</dd>{% endif %}
+        {% if source.final_url and source.final_url != source.url %}
+          <dt>Final address</dt><dd class="wrap">{{ source.final_url }}</dd>
+        {% endif %}
+        {% if source.retrieved_at %}<dt>Retrieved</dt><dd>{{ source.retrieved_at[:16].replace("T", " ") }} UTC</dd>{% endif %}
+        <dt>Document date</dt>
+        <dd>
+          {% if source.document_date %}
+            {{ source.document_date }}{% if source.document_date_origin %} (from {{ source.document_date_origin }}){% endif %}
+          {% else %}
+            Unknown
+          {% endif %}
+        </dd>
+        {% if source.page_count %}<dt>Pages</dt><dd>{{ source.page_count }}</dd>{% endif %}
+        {% if source.chunk_count %}
+          <dt>Passages</dt><dd>{{ source.chunk_count }} (about {{ "{:,}".format(source.token_count) }} tokens)</dd>
+        {% endif %}
+      </dl>
+      {% if source.retrieved_at %}
+        <p class="hint">The retrieval time shows when the page was downloaded, not that its content is current.</p>
+      {% endif %}
+      {% if source.error_message %}<p class="error">{{ source.error_message }}</p>{% endif %}
+      {% for limitation in source.limitations %}<p class="warning">{{ limitation }}</p>{% endfor %}
+    </section>
+
+    <section class="panel" aria-labelledby="details-title">
+      <h2 id="details-title">Details</h2>
+      <form method="post" action="{{ url_for('workspace.source_detail', source_id=source.id) }}" novalidate>
+        {{ csrf(form) }}
+        {{ field(form.title) }}
+        {{ field(form.document_date, "Leave empty if unknown. A missing date is treated as unknown, not current.") }}
+        <div class="actions">
+          <button type="submit" class="button">Save details</button>
+        </div>
+      </form>
+    </section>
+
+    {% if preview %}
+      <section class="panel" aria-labelledby="preview-title">
+        <h2 id="preview-title">Converted text</h2>
+        <p class="hint">
+          Check that tables and scanned pages were read correctly.
+          {% if source.chunk_count and preview | length >= preview_chars %}Only the beginning is shown.{% endif %}
+        </p>
+        <pre class="preview">{{ preview }}</pre>
+      </section>
+    {% endif %}
+  </div>
+{% endblock %}

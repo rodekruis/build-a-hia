@@ -1,0 +1,50 @@
+<section class="panel" id="structure-status"
+         data-poll-url="{{ url_for('drafting.structure_status') }}"
+         data-poll-active="{{ 'true' if state.job_active else 'false' }}"
+         data-poll-reload="true">
+  <h2>{{ "Revise with AI" if draft else "Propose a structure" }}</h2>
+  {% if not workspace.sources_approved %}
+    <p class="warning">
+      The sources changed or are not approved yet.
+      <a href="{{ url_for('workspace.sources', _anchor='readiness') }}">Approve the sources</a> first.
+    </p>
+  {% elif not model_ready %}
+    <p class="warning">The AI model is not configured. Set FOUNDRY_ENDPOINT and FOUNDRY_DEPLOYMENT.</p>
+  {% elif state.job_active %}
+    <p class="meta" aria-live="polite">
+      <span class="badge badge-running">{{ state.job_status | capitalize }}</span>
+      The AI is reading all sources and proposing a structure. This can take a few minutes; this page
+      updates when it is ready.
+    </p>
+  {% else %}
+    {% if state.job_status == "failed" %}
+      <p class="error">The last request failed: {{ state.job_error }}</p>
+    {% endif %}
+    {% if draft %}
+      <form method="post" action="{{ url_for('drafting.revise') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+          <label for="revise-instructions">{{ revise_form.instructions.label.text }}</label>
+          <p class="hint" id="revise-hint">
+            For broader changes, such as "split health into physical and mental health" or
+            "add a category for legal support". The AI revises the current draft, including your edits.
+          </p>
+          <textarea id="revise-instructions" name="instructions" maxlength="2000" required
+                    aria-describedby="revise-hint"></textarea>
+        </div>
+        <button type="submit" class="button secondary">Ask the AI to revise</button>
+      </form>
+    {% else %}
+      <form method="post" action="{{ url_for('drafting.propose') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="field">
+          <label for="propose-instructions">{{ propose_form.instructions.label.text }}</label>
+          <p class="hint" id="propose-hint">For example: "Keep health and shelter separate".</p>
+          <textarea id="propose-instructions" name="instructions" maxlength="2000"
+                    aria-describedby="propose-hint"></textarea>
+        </div>
+        <button type="submit" class="button">Propose structure</button>
+      </form>
+    {% endif %}
+  {% endif %}
+</section>

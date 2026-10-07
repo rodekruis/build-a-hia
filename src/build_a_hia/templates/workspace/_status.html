@@ -1,0 +1,102 @@
+{% from "workspace/_macros.html" import csrf, status_badge %}
+<section class="panel" id="source-status"
+         data-poll-url="{{ url_for('workspace.sources_status') }}"
+         data-poll-active="{{ 'true' if summary.active else 'false' }}">
+  <h2>Sources and conversion</h2>
+  <div aria-live="polite">
+    {% if not sources %}
+      <p class="hint">No sources yet. Add files or web addresses above.</p>
+    {% else %}
+      <ul class="source-list">
+        {% for source in sources %}
+          <li class="source">
+            <div class="source-head">
+              <span class="ref">{{ source.reference }}</span>
+              <a class="source-title" href="{{ url_for('workspace.source_detail', source_id=source.id) }}">{{ source.title or source.url }}</a>
+              {{ status_badge(source) }}
+            </div>
+            <p class="meta">
+              {{ (source.format | format_label) or "Web address" }}
+              {% if source.page_count %} · {{ source.page_count }} page{{ "s" if source.page_count != 1 }}{% endif %}
+              · {{ "Dated " ~ source.document_date if source.document_date else "Date unknown" }}
+            </p>
+            {% if source.status.value == "queued" %}
+              <p class="meta">Waiting to start.</p>
+            {% elif source.status.value == "fetching" %}
+              <p class="meta">Downloading.</p>
+            {% elif source.status.value == "converting" %}
+              {% if source.page_count %}
+                <p class="meta">
+                  <progress value="{{ source.pages_done }}" max="{{ source.page_count }}"></progress>
+                  {{ source.pages_done }} of {{ source.page_count }} pages converted
+                </p>
+              {% else %}
+                <p class="meta">Converting.</p>
+              {% endif %}
+            {% elif source.status.value == "converted" %}
+              <p class="meta">{{ source.chunk_count }} passages · about {{ "{:,}".format(source.token_count) }} tokens</p>
+            {% endif %}
+            {% if source.error_message %}
+              <p class="error">{{ source.error_message }}</p>
+            {% endif %}
+            {% for limitation in source.limitations %}
+              <p class="warning">{{ limitation }}</p>
+            {% endfor %}
+            <div class="source-actions">
+              {% if source.is_active %}
+                <form method="post" action="{{ url_for('workspace.cancel_source', source_id=source.id) }}">
+                  {{ csrf(action_form) }}
+                  <button type="submit" class="button secondary">Cancel</button>
+                </form>
+              {% endif %}
+              {% if source.can_retry %}
+                <form method="post" action="{{ url_for('workspace.retry_source', source_id=source.id) }}">
+                  {{ csrf(action_form) }}
+                  <button type="submit" class="button secondary">Retry</button>
+                </form>
+              {% endif %}
+              <form method="post" action="{{ url_for('workspace.remove_source', source_id=source.id) }}">
+                {{ csrf(action_form) }}
+                <button type="submit" class="button secondary">Remove</button>
+              </form>
+            </div>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
+    <div id="readiness" class="readiness">
+      <h3>Ready to continue?</h3>
+      <p>
+        {{ summary.converted }} of {{ summary.total }} source{{ "s" if summary.total != 1 }} converted,
+        about {{ "{:,}".format(summary.tokens) }} of {{ "{:,}".format(summary.token_limit) }} tokens.
+      </p>
+      {% if summary.active %}
+        <p class="meta">Processing continues in the background. This list updates automatically.</p>
+      {% endif %}
+      {% if summary.over_token_limit %}
+        <p class="error">The converted sources are too long to send to the model together. Remove some sources.</p>
+      {% endif %}
+      {% if workspace.sources_approved %}
+        <p class="success">Sources approved.</p>
+        <div class="actions">
+          <a class="button" href="{{ url_for('drafting.structure') }}">Continue to structure</a>
+        </div>
+      {% elif summary.ready %}
+        <form method="post" action="{{ url_for('workspace.approve_sources') }}">
+          {{ csrf(approve_form) }}
+          {% if summary.failed %}
+            <p class="warning">
+              {{ summary.failed }} source{{ "s" if summary.failed != 1 }} failed or {{ "were" if summary.failed != 1 else "was" }} cancelled.
+              Facts in failed sources are unavailable, not missing.
+            </p>
+            <div class="checkbox">
+              {{ approve_form.accept_failed() }} {{ approve_form.accept_failed.label }}
+            </div>
+          {% endif %}
+          <button type="submit" class="button">Approve sources</button>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</section>
