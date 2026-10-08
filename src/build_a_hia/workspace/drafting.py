@@ -8,7 +8,6 @@ from flask import Blueprint, abort, flash, redirect, render_template, url_for
 from werkzeug.wrappers import Response
 
 from ..services.assembly import assemble
-from ..services.checks import ISSUE_LABELS
 from ..services.content import FIELD_LABELS, OFFER_LIST_FIELDS, OFFER_TEXT_FIELDS, GeneratedContent
 from ..services.drafting import ContentState, DraftingError, StructureState
 from ..services.model import model_configured
@@ -30,11 +29,9 @@ from ..services.structure import (
 from .forms import (
     ActionForm,
     AddNodeForm,
-    GapForm,
     NodeForm,
     OfferForm,
     ProposeForm,
-    QuestionForm,
     RenameForm,
     ReviseForm,
     TargetForm,
@@ -407,9 +404,5 @@ def content_detail(key: str):
         text_fields=OFFER_TEXT_FIELDS,
         list_fields=OFFER_LIST_FIELDS,
         field_labels=FIELD_LABELS,
-        issue_labels=ISSUE_LABELS,
-        action_form=ActionForm(),
         offer_form=OfferForm(formdata=None),
-        question_form=QuestionForm(formdata=None),
-        gap_form=GapForm(formdata=None),
     )

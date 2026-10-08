@@ -192,11 +192,7 @@ class EmptyDecisionForm(BlobForm):
 
 
 class GapForm(FlaskForm):
-    """Submits a gap's status, suggested action and contact, and the page to return to."""
+    """Submits a gap's suggested action and the page to return to."""
 
-    status = SelectField(
-        "Status", choices=[("open", "Open"), ("resolved", "Resolved"), ("wont_fix", "Won't fix")]
-    )
-    suggested_action = TextAreaField("Suggested action", validators=[Optional(), Length(max=500)])
-    suggested_contact = StringField("Suggested contact", validators=[Optional(), Length(max=200)])
+    suggested_action = TextAreaField("Suggested action", validators=[Optional(), Length(max=1000)])
     back = StringField(validators=[Optional(), NODE_KEY])

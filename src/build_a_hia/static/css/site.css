@@ -506,7 +506,9 @@ textarea {
   list-style: none;
 }
 
-.source {
+.source,
+.offer,
+.question {
   padding: 0.9rem 1rem;
   border: 1px solid var(--grey-300);
   border-radius: var(--radius);
@@ -644,8 +646,13 @@ textarea {
 
 .offer,
 .question {
-  padding: 0.75rem 0;
-  border-top: 1px solid var(--grey-300);
+  margin-bottom: 0.75rem;
+}
+
+.question.depth-1,
+.question.depth-2,
+.question.depth-3 {
+  border-left: 3px solid var(--purple-500);
 }
 
 .question.depth-1 {

@@ -3,9 +3,9 @@
 
 {% block title %}{{ subcategory.name }} | Build a HIA{% endblock %}
 
-{% macro value(field_value) -%}
+{% macro value(field_value, show_text=True) -%}
   <div class="field-value">
-    <div class="text">{{ field_value.text }}</div>
+    {% if show_text %}<div class="text">{{ field_value.text }}</div>{% endif %}
     {% if field_value.edited %}
       <span class="badge badge-edited">{{ "Edited by reviewer" if field_value.original else "Added by reviewer" }}</span>
       {% if field_value.original %}<span class="meta">Original: {{ field_value.original }}</span>{% endif %}
@@ -34,13 +34,20 @@
       {% if field in ("name", "chapter") %}
         <input type="text" id="{{ prefix }}-{{ field }}" name="{{ field }}" value="{{ current }}" maxlength="200" {% if field == "name" %}required{% endif %}>
       {% else %}
-        <textarea id="{{ prefix }}-{{ field }}" name="{{ field }}">{{ current }}</textarea>
+        <textarea id="{{ prefix }}-{{ field }}" name="{{ field }}" rows="2" maxlength="{{ 2000 if field in list_fields else 5000 }}">{{ current }}</textarea>
+      {% endif %}
+      {% if offer %}
+        {% if field in list_fields %}
+          {% for entry in offer[field] %}{{ value(entry, False) }}{% endfor %}
+        {% else %}
+          {{ value(offer[field], False) }}
+        {% endif %}
       {% endif %}
     </div>
   {% endfor %}
 {%- endmacro %}
 
-{% macro question_fields(prefix, question_options, item=None) -%}
+{% macro question_fields(prefix, item=None, parent_ref=None) -%}
   <div class="field">
     <label for="{{ prefix }}-question">Question (one line)</label>
     <input type="text" id="{{ prefix }}-question" name="question" maxlength="200" required
@@ -48,17 +55,10 @@
   </div>
   <div class="field">
     <label for="{{ prefix }}-answer">Answer</label>
-    <textarea id="{{ prefix }}-answer" name="answer" required>{{ item.question.answer.text if item else '' }}</textarea>
+    <textarea id="{{ prefix }}-answer" name="answer" rows="3" maxlength="5000" required>{{ item.question.answer.text if item else '' }}</textarea>
+    {% if item %}{{ value(item.question.answer, False) }}{% endif %}
   </div>
-  <div class="field">
-    <label for="{{ prefix }}-parent">Follow-up to</label>
-    <select id="{{ prefix }}-parent" name="parent">
-      <option value="">None (top-level question)</option>
-      {% for option in question_options if not item or option.question.ref != item.question.ref %}
-        <option value="{{ option.question.ref }}" {% if item and item.question.parent_ref == option.question.ref %}selected{% endif %}>{{ option.question.question }}</option>
-      {% endfor %}
-    </select>
-  </div>
+  <input type="hidden" name="parent" value="{{ item.question.parent_ref if item else (parent_ref or '') }}">
 {%- endmacro %}
 
 {% block content %}
@@ -66,7 +66,7 @@
   {% set editable = content and blob and status == "done" %}
   <div class="workspace">
     <section class="panel" aria-labelledby="sub-title">
-      <p><a href="{{ url_for('drafting.content') }}">Back to all sub-categories</a> · <a href="{{ url_for('review.overview') }}">Review overview</a></p>
+      <p><a href="{{ url_for('review.overview') }}">Back to review overview</a></p>
       <p class="eyebrow">{{ category.name }} (category #{{ category.id }}, {{ category.slug }})</p>
       <h1 id="sub-title">{{ subcategory.name }}</h1>
       <p class="meta">Sub-category #{{ subcategory.id }} · slug {{ subcategory.slug }}</p>
@@ -90,32 +90,30 @@
         <h2 id="offers-title">Offers ({{ subcategory.offers | length }})</h2>
         {% for item in subcategory.offers %}
           <article class="offer" id="offer-{{ item.offer.id }}">
-            <h3>{{ item.offer.name.text }}</h3>
+            <h3 data-item-title>{{ item.offer.name.text }}</h3>
             <p class="meta">Offer #{{ item.id }} · slug {{ item.slug }}</p>
-            {{ value(item.offer.name) }}
-            <dl class="content-fields">
-              {% for field in text_fields if field != "name" and item.offer[field].text %}
-                <dt>{{ field_labels[field] }}</dt>
-                <dd>{{ value(item.offer[field]) }}</dd>
-              {% endfor %}
-              {% for field in list_fields if item.offer[field] %}
-                <dt>{{ field_labels[field] }}</dt>
-                <dd>{% for entry in item.offer[field] %}{{ value(entry) }}{% endfor %}</dd>
-              {% endfor %}
-            </dl>
             {% if editable %}
-              <details class="tree-edit">
-                <summary>Edit offer</summary>
-                <form method="post" action="{{ url_for('review.edit_offer', key=subcategory.key, offer_id=item.offer.id) }}">
-                  {{ hidden_fields() }}
-                  {{ offer_fields("offer-" ~ item.offer.id, item.offer) }}
-                  <button type="submit" class="button secondary">Save offer</button>
-                </form>
-                <form method="post" action="{{ url_for('review.delete_offer', key=subcategory.key, offer_id=item.offer.id) }}">
-                  {{ hidden_fields() }}
-                  <button type="submit" class="button danger">Remove offer</button>
-                </form>
-              </details>
+              <form method="post" action="{{ url_for('review.edit_offer', key=subcategory.key, offer_id=item.offer.id) }}" data-content-autosave>
+                {{ hidden_fields() }}
+                {{ offer_fields("offer-" ~ item.offer.id, item.offer) }}
+                <p class="meta" role="status" aria-live="polite" data-save-status hidden></p>
+              </form>
+              <form method="post" action="{{ url_for('review.delete_offer', key=subcategory.key, offer_id=item.offer.id) }}">
+                {{ hidden_fields() }}
+                <button type="submit" class="button danger">Remove offer</button>
+              </form>
+            {% else %}
+              {{ value(item.offer.name) }}
+              <dl class="content-fields">
+                {% for field in text_fields if field != "name" and item.offer[field].text %}
+                  <dt>{{ field_labels[field] }}</dt>
+                  <dd>{{ value(item.offer[field]) }}</dd>
+                {% endfor %}
+                {% for field in list_fields if item.offer[field] %}
+                  <dt>{{ field_labels[field] }}</dt>
+                  <dd>{% for entry in item.offer[field] %}{{ value(entry) }}{% endfor %}</dd>
+                {% endfor %}
+              </dl>
             {% endif %}
           </article>
         {% endfor %}
@@ -136,26 +134,34 @@
         <h2 id="questions-title">Questions ({{ subcategory.questions | length }})</h2>
         {% for item in subcategory.questions %}
           <article class="question depth-{{ [item.depth, 3] | min }}" id="question-{{ item.question.ref }}">
-            <h3>{{ item.question.question }}</h3>
+            <h3 data-item-title>{{ item.question.question }}</h3>
             <p class="meta">
               slug {{ item.slug }}{% if item.parent_slug %} · follow-up to {{ item.parent_slug }}{% endif %}
               · updated {{ item.updated }} · highlight No
               {% if item.question.question_edited %}<span class="badge badge-edited">Question edited</span>{% endif %}
             </p>
-            {{ value(item.question.answer) }}
             {% if editable %}
-              <details class="tree-edit">
-                <summary>Edit question</summary>
-                <form method="post" action="{{ url_for('review.edit_question', key=subcategory.key, ref=item.question.ref) }}">
-                  {{ hidden_fields() }}
-                  {{ question_fields("question-" ~ item.question.ref, subcategory.questions, item) }}
-                  <button type="submit" class="button secondary">Save question</button>
-                </form>
-                <form method="post" action="{{ url_for('review.delete_question', key=subcategory.key, ref=item.question.ref) }}">
-                  {{ hidden_fields() }}
-                  <button type="submit" class="button danger">Remove question</button>
-                </form>
-              </details>
+              <form method="post" action="{{ url_for('review.edit_question', key=subcategory.key, ref=item.question.ref) }}" data-content-autosave>
+                {{ hidden_fields() }}
+                {{ question_fields("question-" ~ item.question.ref, item=item) }}
+                <p class="meta" role="status" aria-live="polite" data-save-status hidden></p>
+              </form>
+              {% if item.depth == 0 %}
+                <details class="tree-edit" id="add-sub-question-{{ item.question.ref }}">
+                  <summary>Add a sub-question</summary>
+                  <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
+                    {{ hidden_fields() }}
+                    {{ question_fields("new-sub-question-" ~ item.question.ref, parent_ref=item.question.ref) }}
+                    <button type="submit" class="button secondary">Add sub-question</button>
+                  </form>
+                </details>
+              {% endif %}
+              <form method="post" action="{{ url_for('review.delete_question', key=subcategory.key, ref=item.question.ref) }}">
+                {{ hidden_fields() }}
+                <button type="submit" class="button danger">{{ "Remove sub-question" if item.depth > 0 else "Remove question" }}</button>
+              </form>
+            {% else %}
+              {{ value(item.question.answer) }}
             {% endif %}
           </article>
         {% endfor %}
@@ -164,7 +170,7 @@
             <summary>Add a question</summary>
             <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
               {{ hidden_fields() }}
-              {{ question_fields("new-question", subcategory.questions) }}
+              {{ question_fields("new-question") }}
               <button type="submit" class="button secondary">Add question</button>
             </form>
           </details>
@@ -190,7 +196,7 @@
         {% if content_state.approved and content_state.empty_decision == "drop" %}
           <p class="success">This sub-category is left out of the export.</p>
         {% elif content_state.approved %}
-          <p class="success">Approved. Editing the content withdraws the approval.</p>
+          <p class="success" data-content-approved>Approved. Editing the content withdraws the approval.</p>
         {% elif content and not editable %}
           <p class="meta">Only current, generated content can be approved.</p>
         {% elif editable and content.is_empty %}
@@ -199,10 +205,11 @@
         {% if can_regenerate and content_state.edited %}
           <p class="warning">Regenerating replaces your edits and resets the gap list.</p>
         {% endif %}
+        <p class="warning" data-content-needs-approval hidden>Content edited. Approve the content again after review.</p>
         <div class="source-actions">
-          {% if editable and not content_state.approved %}
+          {% if editable %}
             {% if content.is_empty %}
-              <form method="post" action="{{ url_for('review.decide_empty', key=subcategory.key) }}" class="inline-form">
+              <form method="post" action="{{ url_for('review.decide_empty', key=subcategory.key) }}" class="inline-form" {% if content_state.approved %}hidden{% endif %}>
                 {{ hidden_fields() }}
                 <select name="decision" aria-label="Decision">
                   <option value="keep">Keep it without content</option>
@@ -211,7 +218,7 @@
                 <button type="submit" class="button">Save decision</button>
               </form>
             {% else %}
-              <form method="post" action="{{ url_for('review.approve_content', key=subcategory.key) }}">
+              <form method="post" action="{{ url_for('review.approve_content', key=subcategory.key) }}" data-content-approval {% if content_state.approved %}hidden{% endif %}>
                 {{ hidden_fields() }}
                 <button type="submit" class="button">Approve content</button>
               </form>

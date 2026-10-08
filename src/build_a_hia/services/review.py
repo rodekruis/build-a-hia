@@ -42,8 +42,8 @@ GAP_KIND_LABELS = {
     "empty": "No supporting content",
 }
 SUGGESTED_ACTIONS = {
-    "missing": "Ask the service for this information, or leave the field blank.",
-    "conflict": "Check with the service which information is current.",
+    "missing": "Ask the program team for this information, or leave the field blank.",
+    "conflict": "Check with program team which information is current.",
     "outdated": "Confirm that the information is still valid.",
     "uncertain_translation": "Ask a native speaker to check the translation.",
     "unsupported": "Find a source for this information, or leave it out.",
@@ -361,7 +361,7 @@ class GapStore:
             session_key: Key of the workspace session.
             gap_id: ID of the gap.
             status: One of the `GAP_STATUSES` keys.
-            action: Suggested action; trimmed to 500 characters.
+            action: Suggested action, including any contact; trimmed to 1000 characters.
             contact: Suggested contact; trimmed to 200 characters.
 
         Raises:
@@ -371,7 +371,7 @@ class GapStore:
             raise ReviewError("Choose a valid status.")
 
         def apply(data: dict[str, Any]) -> bool:
-            data.update(status=status, action=action.strip()[:500], contact=contact.strip()[:200])
+            data.update(status=status, action=action.strip()[:1000], contact=contact.strip()[:200])
             return True
 
         mutate_entity(self._table, session_key, f"{GAP_ROW_PREFIX}{gap_id}", apply, create=True)
@@ -401,6 +401,10 @@ def collect_gaps(
     def add(gap_id: str, sub: AssembledSubcategory | None, **values: str) -> None:
         override = overrides.get(gap_id, {})
         kind = values["kind"]
+        action = override.get("action", SUGGESTED_ACTIONS.get(kind, ""))
+        contact = override.get("contact", "")
+        if contact and contact.casefold() not in action.casefold():
+            action = f"{action}\nContact: {contact}"
         gaps.append(
             Gap(
                 id=gap_id,
@@ -414,7 +418,7 @@ def collect_gaps(
                 kind=kind,
                 issue=values["issue"],
                 source_reference=values.get("source_reference", ""),
-                suggested_action=override.get("action") or SUGGESTED_ACTIONS.get(kind, ""),
+                suggested_action=action,
                 suggested_contact=override.get("contact", ""),
                 status=override.get("status", "open"),
             )

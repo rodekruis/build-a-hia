@@ -9,8 +9,7 @@
       {{ steps(5) }}
       <h1 id="review-title">Review content</h1>
       <p class="lead">
-        Approve each sub-category after checking its content against the evidence and for public
-        disclosure. Approving the structure did not approve the content.
+        Approve each sub-category after checking its content against the evidence. Approving the structure did not approve the content.
       </p>
       {% if not plan.subcategories %}
         <p class="warning">Approve the structure and generate content first.
@@ -40,13 +39,12 @@
     </section>
 
     <section class="panel" id="gaps" aria-labelledby="gaps-title">
-      <h2 id="gaps-title">Address gaps</h2>
+      <h2 id="gaps-title">Review gaps</h2>
       <p class="lead">
         Missing, conflicting or uncertain information, and sources that could not be read.
         Unresolved gaps do not block the download; they are listed in the internal review workbook.
       </p>
       {% if gaps %}
-        <p class="meta">{{ plan.open_gaps }} of {{ gaps | length }} open. Open gaps are listed first.</p>
         <ul class="source-list">
           {% set on_overview = true %}
           {% for gap in gaps %}
