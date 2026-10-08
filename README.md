@@ -2,7 +2,7 @@
 
 A [Helpful Information App](https://github.com/rodekruis/helpful-information) (HIA) is a public website where a Red Cross or Red Crescent National Society tells people affected by a crisis which humanitarian services it offers and how to reach them. Its content lives in a Google Sheet with categories, sub-categories, offers (services) and questions with answers.
 
-Filling that sheet by hand from guidance documents, service lists and web pages takes days. **Build-a-HIA** drafts it with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
+Filling that sheet by hand from guidelines, infosheets and web pages can take days. **Build-a-HIA** creates a draft with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
 
 ## How it works
 
@@ -10,7 +10,7 @@ Filling that sheet by hand from guidance documents, service lists and web pages 
 2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
 3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve.
 4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap.
-5. **Review**: staff check each sub-category against the cited evidence, edit it and approve it. Gaps (missing, conflicting or outdated information, failed sources) get a status, a suggested action and a contact.
+5. **Review**: staff check each sub-category against the cited evidence, edit its fields inline and approve it. Edits save automatically. Gaps (missing, conflicting or outdated information, failed sources) show an editable suggested action, including any relevant contact.
 6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
 
 Work happens in a temporary, anonymous session: there are no accounts, and all documents and drafts are deleted after 2 hours of inactivity or 24 hours at the latest.
@@ -81,14 +81,22 @@ Set `HIA_JOB_VISIBILITY_SECONDS` higher than each job's replica timeout, so a ru
 
 ## Review and download
 
-Each sub-category's content is edited and approved on its own page; empty sub-categories need a keep or leave-out decision. Edits withdraw approval, and regenerating discards edits. Gaps (model issues, empty sub-categories, failed or limited sources) get a status, a suggested action and a contact.
+Each sub-category's content is edited and approved on its own page. Offers and questions appear in separate bordered boxes, with their fields editable inline alongside source evidence and reviewer-edit markers. Changes save automatically after a short pause in typing or when leaving a field; there is no separate Save button. Save status and errors appear beside the editor. Edits withdraw approval, and regenerating discards edits. Empty sub-categories need a keep or leave-out decision.
+
+Top-level questions have an **Add a sub-question** control with the parent already selected. Sub-questions are indented with a left-hand accent line and have a **Remove sub-question** button; only top-level questions can add sub-questions. Parent links are fixed during editing, with no **Follow-up to** selector. Offers and top-level questions retain their own remove buttons.
+
+Gaps (model issues, empty sub-categories, failed or limited sources) show their description followed by an editable suggested action. Action edits also save automatically. There are no separate status or contact controls; relevant contacts belong in the action text, and previously saved contacts are included there. Default suggestions are application-defined by issue type, not LLM-generated; missing or conflicting information refers reviewers to the program team. Gaps do not block downloads and are included in the internal review workbook, not the publishable HIA workbook.
 
 When nothing blocks export, **Download** creates a snapshot with two files:
 
 - `hia.xlsx`: content in the HIA template layout, to copy into the real HIA Google Sheet.
 - `review-internal.xlsx`: gaps, evidence and sources. Internal only; never share or publish it.
 
-The template is pinned in `src/build_a_hia/hia_template/` and checked by SHA-256, sheet names and headers on every export. Demo rows (including the Hidden scaffolding rows), hyperlinks and comments are removed; generated content starts directly below the headers. Generated IDs still start at 2 for compatibility. All values are written as text, so nothing is evaluated as a formula when the file is opened. Text that Google Sheets would run as a formula when pasted (starting with `=`, or `+`/`-` before a letter) blocks the export until it is edited. On the Referral Page only the locale and last-updated timestamp are filled. To change the template, add a new pinned file and update `TEMPLATE_VERSION`, the checksum and `CONTRACT` in `services/workbook.py`.
+The template is pinned in `src/build_a_hia/hia_template/` and checked by SHA-256, sheet names and headers on every export. Demo rows (including the Hidden scaffolding rows), hyperlinks and comments are removed. Generated content starts on row 2, directly below the headers, with visibility set to `Show` in Categories, Sub-Categories, Offers and Q&As. Generated IDs still start at 2 for compatibility; no demo row with ID 1 is retained.
+
+Review everything for public disclosure before copying it into a fresh HIA template. In Categories, Sub-Categories, Offers and Q&As, copy rows 2 and below into the same rows using **Paste special > Values only**. On the Referral Page, copy only the filled values in column B: text direction, language and last-updated timestamp. Nothing is published automatically. Create new downloads after edits to get an updated snapshot.
+
+Text values are stored as literal strings, so they are not evaluated as formulas when the file is opened. Text that Google Sheets would run as a formula when pasted (starting with `=`, or `+`/`-` before a letter) blocks the export until it is edited. To change the template, add a new pinned file and update `TEMPLATE_VERSION`, the checksum and `CONTRACT` in `services/workbook.py`.
 
 ## Checks
 
