@@ -124,27 +124,26 @@ def test_hia_workbook_keeps_the_template_tabs_and_headers(hia_bytes):
     assert dict(exported.defined_names).keys() == dict(template.defined_names).keys()
 
 
-def test_hia_rows_are_literal_values_after_the_scaffolding_row(hia_bytes):
+def test_hia_rows_are_literal_values_directly_after_the_headers(hia_bytes):
     exported = load_workbook(io.BytesIO(hia_bytes))
     categories = exported["Categories"]
     offers = exported["Offers"]
     questions = exported["Q&As"]
 
-    assert [categories["A2"].value, categories["C2"].value] == [1, "hidden"]
-    assert [c.value for c in categories[3][:5]] == [2, "Hide", "shelter", "Shelter", "Places"]
-    assert categories["A4"].value is None
-    assert [c.value for c in exported["Sub-Categories"][3][:6]] == [
+    assert [c.value for c in categories[2][:5]] == [2, "Show", "shelter", "Shelter", "Places"]
+    assert categories["A3"].value is None
+    assert [c.value for c in exported["Sub-Categories"][2][:6]] == [
         "Shelter",
         2,
         2,
-        "Hide",
+        "Show",
         "beds",
         "Beds",
     ]
-    assert [offers[f"{c}3"].value for c in "ABCDE"] == ["Beds", 2, 2, 2, "Hide"]
-    assert offers["J3"].value == "0800 1234\n+380 44 123 4567"
-    assert offers["N3"].value == "Mon-Fri 9:00-17:00"
-    assert [questions[f"{c}3"].value for c in "FGHIJK"] == [
+    assert [offers[f"{c}2"].value for c in "ABCDE"] == ["Beds", 2, 2, 2, "Show"]
+    assert offers["J2"].value == "0800 1234\n+380 44 123 4567"
+    assert offers["N2"].value == "Mon-Fri 9:00-17:00"
+    assert [questions[f"{c}2"].value for c in "FGHIJK"] == [
         "who-can-stay",
         None,
         "Who can stay?",
@@ -152,15 +151,54 @@ def test_hia_rows_are_literal_values_after_the_scaffolding_row(hia_bytes):
         "2026-10-07",
         "No",
     ]
-    assert questions["G4"].value == "who-can-stay"
-    assert questions["G2"].value == "example-question"
+    assert questions["G3"].value == "who-can-stay"
+
+
+@pytest.mark.parametrize("sheet", workbook_module.CONTRACT)
+def test_generated_content_is_visible_by_default(hia_bytes, sheet):
+    exported = load_workbook(io.BytesIO(hia_bytes))
+    contract = workbook_module.CONTRACT[sheet]
+    column = next(column for column, marker in contract.headers.items() if marker == "#VISIBLE")
+    name_column = (
+        "H"
+        if sheet == "Q&As"
+        else next(column for column, marker in contract.headers.items() if marker == "#NAME")
+    )
+    rows = [
+        row
+        for row in range(2, exported[sheet].max_row + 1)
+        if exported[sheet][f"{name_column}{row}"].value is not None
+    ]
+
+    assert rows
+    assert all(exported[sheet][f"{column}{row}"].value == "Show" for row in rows)
+
+
+@pytest.mark.parametrize("sheet", workbook_module.CONTRACT)
+def test_hidden_demo_rows_are_not_exported(hia_bytes, sheet):
+    exported = load_workbook(io.BytesIO(hia_bytes))
+
+    assert not any(
+        cell.value in ("Hidden", "hidden", "example-question")
+        for row in exported[sheet].iter_rows(min_row=2)
+        for cell in row
+    )
+
+
+def test_empty_workbook_has_no_demo_rows():
+    exported = load_workbook(io.BytesIO(build_hia_workbook([], CONTEXT, EXPORTED_AT)))
+
+    for sheet in workbook_module.CONTRACT:
+        assert all(
+            cell.value is None for row in exported[sheet].iter_rows(min_row=2) for cell in row
+        )
 
 
 def test_text_never_becomes_a_formula(hia_bytes):
     exported = load_workbook(io.BytesIO(hia_bytes))
 
-    name = exported["Offers"]["G3"]
-    answer = exported["Q&As"]["I4"]
+    name = exported["Offers"]["G2"]
+    answer = exported["Q&As"]["I3"]
     assert name.value.startswith("=HYPERLINK") and name.data_type == "s"
     assert answer.value == "@SUM(1)" and answer.data_type == "s"
     with zipfile.ZipFile(io.BytesIO(hia_bytes)) as archive:
@@ -217,7 +255,7 @@ def test_capacity_is_enforced():
     structure = Structure(
         categories=[
             Node(key=f"c{n}", name=f"Category {n}", children=[Node(key=f"s{n}", name=f"Sub {n}")])
-            for n in range(99)
+            for n in range(100)
         ]
     )
 

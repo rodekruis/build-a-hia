@@ -39,7 +39,7 @@
         <ul class="source-list">
           <li class="source">
             <a href="{{ url_for('review.download_file', snapshot=latest.snapshot, name=names[0]) }}">Download hia.xlsx</a>
-            <p class="meta">For publication after review. Contains only the template's eight tabs; every row has visibility “Hide”.</p>
+            <p class="meta">For publication after review. Contains only the template's eight tabs.</p>
           </li>
           <li class="source">
             <a href="{{ url_for('review.download_file', snapshot=latest.snapshot, name=names[1]) }}">Download review-internal.xlsx</a>
@@ -53,11 +53,11 @@
       <h2 id="copy-title">Copying into the HIA</h2>
       <ol>
         <li>Make a fresh copy of the HIA template. Do not paste into an HIA that already has content.</li>
-        <li>In Categories, Sub-Categories, Offers and Q&amp;As, copy rows 3 and below from hia.xlsx and paste them into the same rows of the template using <em>Paste special › Values only</em>.</li>
+        <li>In Categories, Sub-Categories, Offers and Q&amp;As, copy rows 2 and below from hia.xlsx and paste them into the same rows of the template using <em>Paste special › Values only</em>.</li>
         <li>In Referral Page, copy only the filled values in column B (text direction, language, last updated).</li>
-        <li>Review everything for public disclosure before changing any visibility to “Show”. Hidden rows are still public.</li>
+        <li>Review everything for public disclosure before copying it into the HIA.</li>
       </ol>
-      <p class="hint">Template contract: {{ template_version }}. IDs start at 2 because row 2 is the template's hidden scaffolding row.</p>
+      <p class="hint">Template contract: {{ template_version }}. IDs start at 2 for compatibility with earlier exports.</p>
     </section>
   </div>
 {% endblock %}

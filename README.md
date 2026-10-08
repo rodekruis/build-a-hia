@@ -2,7 +2,7 @@
 
 A [Helpful Information App](https://github.com/rodekruis/helpful-information) (HIA) is a public website where a Red Cross or Red Crescent National Society tells people affected by a crisis which humanitarian services it offers and how to reach them. Its content lives in a Google Sheet with categories, sub-categories, offers (services) and questions with answers.
 
-Filling that sheet by hand from guidance documents, service lists and web pages can take days. **Build-a-HIA** drafts it with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
+Filling that sheet by hand from guidance documents, service lists and web pages takes days. **Build-a-HIA** drafts it with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
 
 ## How it works
 
@@ -88,7 +88,7 @@ When nothing blocks export, **Download** creates a snapshot with two files:
 - `hia.xlsx`: content in the HIA template layout, to copy into the real HIA Google Sheet.
 - `review-internal.xlsx`: gaps, evidence and sources. Internal only; never share or publish it.
 
-The template is pinned in `src/build_a_hia/hia_template/` and checked by SHA-256, sheet names and headers on every export. Demo rows, hyperlinks and comments are removed; the hidden scaffolding row (ID 1) is kept, so generated IDs start at 2. All values are written as text, so nothing is evaluated as a formula when the file is opened. Text that Google Sheets would run as a formula when pasted (starting with `=`, or `+`/`-` before a letter) blocks the export until it is edited. On the Referral Page only the locale and last-updated timestamp are filled. To change the template, add a new pinned file and update `TEMPLATE_VERSION`, the checksum and `CONTRACT` in `services/workbook.py`.
+The template is pinned in `src/build_a_hia/hia_template/` and checked by SHA-256, sheet names and headers on every export. Demo rows (including the Hidden scaffolding rows), hyperlinks and comments are removed; generated content starts directly below the headers. Generated IDs still start at 2 for compatibility. All values are written as text, so nothing is evaluated as a formula when the file is opened. Text that Google Sheets would run as a formula when pasted (starting with `=`, or `+`/`-` before a letter) blocks the export until it is edited. On the Referral Page only the locale and last-updated timestamp are filled. To change the template, add a new pinned file and update `TEMPLATE_VERSION`, the checksum and `CONTRACT` in `services/workbook.py`.
 
 ## Checks
 

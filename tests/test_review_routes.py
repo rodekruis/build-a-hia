@@ -91,6 +91,25 @@ def _approve_all(client, services, key, night, cash):
     )
 
 
+def test_pages_do_not_describe_generated_content_as_hidden(generated, services):
+    client, key, night, cash = generated
+
+    content_page = client.get(f"/content/{night}")
+    assert content_page.status_code == 200
+    assert b"visibility Hide" not in content_page.data
+
+    _approve_all(client, services, key, night, cash)
+    client.post("/download")
+    download_page = client.get("/download")
+    assert download_page.status_code == 200
+    assert b"Latest snapshot" in download_page.data
+    assert b"visibility" not in download_page.data
+    assert b"Hidden rows" not in download_page.data
+    assert b"hidden scaffolding row" not in download_page.data
+    assert b"copy rows 2 and below" in download_page.data
+    assert b"Review everything for public disclosure" in download_page.data
+
+
 def test_reviewer_edits_are_flagged_and_withdraw_approval(generated, services):
     client, key, night, _cash = generated
     state = _state(services, key, night)

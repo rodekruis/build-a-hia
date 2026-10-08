@@ -69,7 +69,7 @@
       <p><a href="{{ url_for('drafting.content') }}">Back to all sub-categories</a> · <a href="{{ url_for('review.overview') }}">Review overview</a></p>
       <p class="eyebrow">{{ category.name }} (category #{{ category.id }}, {{ category.slug }})</p>
       <h1 id="sub-title">{{ subcategory.name }}</h1>
-      <p class="meta">Sub-category #{{ subcategory.id }} · slug {{ subcategory.slug }} · visibility Hide</p>
+      <p class="meta">Sub-category #{{ subcategory.id }} · slug {{ subcategory.slug }}</p>
       {% if status == "outdated" %}
         <p class="warning">This content was generated from an older structure, sources or context. Regenerate it.</p>
       {% elif status in ("queued", "running") %}

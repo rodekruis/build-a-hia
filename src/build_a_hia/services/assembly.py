@@ -12,12 +12,12 @@ from dataclasses import dataclass, field
 from .content import GeneratedContent, Offer, Question
 from .structure import Structure
 
-VISIBLE = "Hide"
+VISIBLE = "Show"
 HIGHLIGHT = "No"
 MAX_SLUG_LENGTH = 60
-# The template's row 2 is a hidden scaffolding row with ID 1, so content starts at ID 2.
+# Keep generated IDs compatible with exports that included the demo scaffolding row.
 FIRST_ID = 2
-# Slugs used by the scaffolding rows (the hidden Q&A row points at "example-question").
+# Keep the former demo scaffolding slugs reserved for compatibility.
 RESERVED_SLUGS = frozenset({"hidden", "example-question"})
 
 
@@ -161,9 +161,9 @@ def assemble(
 ) -> list[AssembledCategory]:
     """Turn a structure and its content into HIA rows with IDs, slugs and parent links.
 
-    IDs are sequential per entity type in structure order and start at `FIRST_ID` (2),
-    because the template's hidden scaffolding row uses ID 1. Excluded sub-categories get no
-    ID, and their content is left out.
+    IDs are sequential per entity type in structure order and start at `FIRST_ID` (2)
+    for compatibility with earlier exports. Excluded sub-categories get no ID, and their
+    content is left out.
 
     Args:
         structure: The approved structure.
