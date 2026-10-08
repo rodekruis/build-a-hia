@@ -2,7 +2,7 @@
 
 A [Helpful Information App](https://github.com/rodekruis/helpful-information) (HIA) is a public website where a Red Cross or Red Crescent National Society tells people affected by a crisis which humanitarian services it offers and how to reach them. Its content lives in a Google Sheet with categories, sub-categories, offers (services) and questions with answers.
 
-Filling that sheet by hand from guidelines, infosheets and web pages can take days. **Build-a-HIA** creates a draft with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
+Filling that sheet by hand from guidelines, documents and web pages can take days. **Build-a-HIA** creates a draft with AI: staff upload the documents and web pages they already have, and the app proposes a structure and writes the content, citing a source passage for every fact. Staff review and correct everything before they download a workbook to copy into their HIA sheet. Nothing is published automatically.
 
 ## How it works
 
