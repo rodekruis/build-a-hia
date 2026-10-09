@@ -209,7 +209,7 @@ def _review(
         flash(error.message, "error")
         return _to_content(key, "approval")
     flash("Content approved." if empty_decision != "drop" else "Sub-category left out.", "success")
-    return redirect(url_for("review.overview"))
+    return redirect(url_for("review.overview", _anchor="review-title"))
 
 
 @review_bp.post("/content/<key>/approve")

@@ -100,7 +100,7 @@
               </form>
               <form method="post" action="{{ url_for('review.delete_offer', key=subcategory.key, offer_id=item.offer.id) }}">
                 {{ hidden_fields() }}
-                <button type="submit" class="button danger">Remove offer</button>
+                <button type="submit" class="button danger small">Remove offer</button>
               </form>
             {% else %}
               {{ value(item.offer.name) }}
@@ -152,13 +152,13 @@
                   <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
                     {{ hidden_fields() }}
                     {{ question_fields("new-sub-question-" ~ item.question.ref, parent_ref=item.question.ref) }}
-                    <button type="submit" class="button secondary">Add sub-question</button>
+                    <button type="submit" class="button secondary small">Add sub-question</button>
                   </form>
                 </details>
               {% endif %}
               <form method="post" action="{{ url_for('review.delete_question', key=subcategory.key, ref=item.question.ref) }}">
                 {{ hidden_fields() }}
-                <button type="submit" class="button danger">{{ "Remove sub-question" if item.depth > 0 else "Remove question" }}</button>
+                <button type="submit" class="button danger small">{{ "Remove sub-question" if item.depth > 0 else "Remove question" }}</button>
               </form>
             {% else %}
               {{ value(item.question.answer) }}
@@ -171,7 +171,7 @@
             <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
               {{ hidden_fields() }}
               {{ question_fields("new-question") }}
-              <button type="submit" class="button secondary">Add question</button>
+              <button type="submit" class="button secondary small">Add question</button>
             </form>
           </details>
         {% endif %}
