@@ -440,12 +440,16 @@ textarea {
   background: var(--purple-900);
 }
 
-.button.secondary {
+.button.secondary,
+.button.small {
   padding: 0.35rem 1rem;
+  font-size: 0.85rem;
+}
+
+.button.secondary {
   border-color: var(--grey-500);
   background: var(--white);
   color: var(--black);
-  font-size: 0.85rem;
 }
 
 .button.secondary.large {
@@ -628,6 +632,10 @@ textarea {
 
 .tree-edit {
   margin: 0.4rem 0;
+}
+
+.question > .tree-edit {
+  margin-block: 1rem;
 }
 
 .tree-edit summary {

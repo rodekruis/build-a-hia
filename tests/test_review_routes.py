@@ -200,6 +200,24 @@ def test_approval_needs_the_current_version(generated, services):
     assert _state(services, key, night).approved
 
 
+@pytest.mark.parametrize("decision", ["approve", "keep", "drop"])
+def test_approval_redirects_to_review_heading(generated, services, decision):
+    client, key, night, cash = generated
+    sub_key = night if decision == "approve" else cash
+    endpoint = "approve" if decision == "approve" else "empty"
+    data = {"blob": _state(services, key, sub_key).blob}
+    if decision != "approve":
+        data["decision"] = decision
+
+    response = client.post(f"/content/{sub_key}/{endpoint}", data=data)
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/review#review-title"
+    assert _state(services, key, sub_key).approved
+    page = client.get(response.headers["Location"]).data.decode()
+    assert page.index('id="review-title"') < page.index('id="gaps"')
+
+
 def test_content_page_puts_gaps_after_content_and_approve_next_to_regenerate(generated):
     client, _key, night, _cash = generated
 
@@ -216,6 +234,12 @@ def test_content_page_puts_gaps_after_content_and_approve_next_to_regenerate(gen
     assert "Save question" not in page
     assert "Remove offer" in page
     assert "Remove question" in page
+    assert 'class="button danger small">Remove offer</button>' in page
+    assert 'class="button danger small">Remove question</button>' in page
+    for label in ("Add a question", "Add a sub-question"):
+        assert f"<summary>{label}</summary>" in page
+    for label in ("Add question", "Add sub-question"):
+        assert f'class="button secondary small">{label}</button>' in page
     assert 'name="phone_numbers"' in page
     assert 'name="answer"' in page
     assert "Follow-up to" not in page
@@ -249,7 +273,7 @@ def test_questions_can_be_added_and_nested(generated, services):
         "</article>", 1
     )[0]
     assert ">Remove question</button>" in parent_card
-    assert ">Remove sub-question</button>" in child_card
+    assert 'class="button danger small">Remove sub-question</button>' in child_card
     assert 'type="hidden" name="parent" value=""' in parent_card
     assert 'type="hidden" name="parent" value="q1"' in child_card
     assert "<select" not in parent_card + child_card
