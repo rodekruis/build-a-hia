@@ -183,8 +183,21 @@ def test_gaps_combine_issues_empty_content_and_conversion_problems(content):
     assert by_id["i1"].source_reference == "S1 p.1 (S1-p1-c1)"
     assert by_id["i1"].status == "resolved"
     assert by_id["i1"].suggested_contact == "Desk"
-    assert by_id["i1"].suggested_action
+    assert by_id["i1"].suggested_action == (
+        "Ask the program team for this information, or leave the field blank.\nContact: Desk"
+    )
     assert by_id["empty-s2"].kind == "empty"
     assert by_id["src-src1-e"].kind == "conversion"
     assert "unavailable, not missing" in by_id["src-src1-e"].issue
     assert by_id["src-src1-1"].issue == "Scan: Pages 3-4 unreadable."
+
+    custom_gaps = collect_gaps(categories, sources, {"i1": {"action": "Contact the coordinator."}})
+    assert next(gap for gap in custom_gaps if gap.id == "i1").suggested_action == (
+        "Contact the coordinator."
+    )
+
+    content.issues[0].kind = "conflict"
+    conflict_gaps = collect_gaps(categories, sources, {})
+    assert next(gap for gap in conflict_gaps if gap.id == "i1").suggested_action == (
+        "Check with program team which information is current."
+    )

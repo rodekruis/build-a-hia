@@ -1,8 +1,8 @@
 """Build the two downloads: the publishable HIA workbook and the internal review workbook.
 
 The HIA workbook starts from a pinned copy of the inspected demo workbook. Demo content is
-cleared, the hidden scaffolding rows are kept, and generated rows are written as literal
-values from row 3. Every text cell is stored as a string so it can never become a formula.
+cleared, including the hidden scaffolding rows, and generated rows are written as literal
+values from row 2. Every text cell is stored as a string so it can never become a formula.
 """
 
 import hashlib
@@ -38,7 +38,7 @@ SHEETS = (
     "Q&As",
     "Chat",
 )
-DATA_START_ROW = 3
+DATA_START_ROW = 2
 MAX_CELL_LENGTH = 32_767
 CREATOR = "Build a HIA"
 
@@ -49,16 +49,13 @@ class SheetContract:
 
     Attributes:
         headers: Expected header marker (e.g. "#ID") per column letter in row 1.
-        warning_column: 1-based index of the template's warning column; cells to its right
-            are cleared, also in the scaffolding row.
+        warning_column: 1-based index of the template's warning column.
         last_row: Last row covered by the template's named and validated ranges.
-        scaffold_ids: Columns of the hidden scaffolding row 2 that are set to ID 1.
     """
 
     headers: dict[str, str]
     warning_column: int
     last_row: int
-    scaffold_ids: tuple[str, ...]
 
     @property
     def capacity(self) -> int:
@@ -79,7 +76,6 @@ CONTRACT = {
         },
         warning_column=7,
         last_row=100,
-        scaffold_ids=("A",),
     ),
     "Sub-Categories": SheetContract(
         headers={
@@ -93,7 +89,6 @@ CONTRACT = {
         },
         warning_column=9,
         last_row=99,
-        scaffold_ids=("B", "C"),
     ),
     "Offers": SheetContract(
         headers={
@@ -117,7 +112,6 @@ CONTRACT = {
         },
         warning_column=19,
         last_row=99,
-        scaffold_ids=("B", "C", "D"),
     ),
     "Q&As": SheetContract(
         headers={
@@ -133,7 +127,6 @@ CONTRACT = {
         },
         warning_column=13,
         last_row=99,
-        scaffold_ids=("B", "C"),
     ),
 }
 REFERRAL_KEYS = ("#locale.dir", "#locale.language", "#timestamp.last-updated")
@@ -199,10 +192,7 @@ def _reset_content_sheet(ws: Worksheet, contract: SheetContract) -> None:
         ws.unmerge_cells(merged)
     for row in ws.iter_rows(min_row=2, max_row=max(ws.max_row, contract.last_row)):
         for cell in row:
-            if cell.row >= DATA_START_ROW or cell.column > contract.warning_column:
-                _clear(cell)
-    for column in contract.scaffold_ids:
-        ws[f"{column}2"].value = 1
+            _clear(cell)
 
 
 def _clear(cell: Any) -> None:
@@ -240,8 +230,8 @@ def build_hia_workbook(
 ) -> bytes:
     """Build the publishable HIA workbook from the pinned template.
 
-    Demo content is cleared, the hidden scaffolding rows are kept, Referral Page settings
-    are filled in, and rows are written as literal values from row 3. It contains no
+    Demo content and hidden scaffolding rows are cleared, Referral Page settings
+    are filled in, and rows are written as literal values from row 2. It contains no
     evidence, sources or review notes.
 
     Args:

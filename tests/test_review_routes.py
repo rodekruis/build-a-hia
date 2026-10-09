@@ -91,6 +91,25 @@ def _approve_all(client, services, key, night, cash):
     )
 
 
+def test_pages_do_not_describe_generated_content_as_hidden(generated, services):
+    client, key, night, cash = generated
+
+    content_page = client.get(f"/content/{night}")
+    assert content_page.status_code == 200
+    assert b"visibility Hide" not in content_page.data
+
+    _approve_all(client, services, key, night, cash)
+    client.post("/download")
+    download_page = client.get("/download")
+    assert download_page.status_code == 200
+    assert b"Latest snapshot" in download_page.data
+    assert b"visibility" not in download_page.data
+    assert b"Hidden rows" not in download_page.data
+    assert b"hidden scaffolding row" not in download_page.data
+    assert b"copy rows 2 and below" in download_page.data
+    assert b"Review everything for public disclosure" in download_page.data
+
+
 def test_reviewer_edits_are_flagged_and_withdraw_approval(generated, services):
     client, key, night, _cash = generated
     state = _state(services, key, night)
@@ -111,6 +130,46 @@ def test_reviewer_edits_are_flagged_and_withdraw_approval(generated, services):
     assert edited.description.evidence
     page = client.get(f"/content/{night}")
     assert b"Edited by reviewer" in page.data
+
+
+@pytest.mark.parametrize("item_type", ["offers", "questions"])
+def test_content_autosave_returns_updated_version_and_rejects_stale_edits(
+    generated, services, item_type
+):
+    client, key, night, _cash = generated
+    state = _state(services, key, night)
+    content = services.contents.result(key, state)
+    if item_type == "offers":
+        item_id = content.offers[0].id
+        data = _offer_form(state.blob, description="Updated description.")
+    else:
+        item_id = content.questions[0].ref
+        data = {
+            "blob": state.blob,
+            "question": "Who can stay?",
+            "answer": "Everyone.",
+            "parent": "",
+        }
+    endpoint = f"/content/{night}/{item_type}/{item_id}"
+    headers = {"Accept": "application/json"}
+
+    response = client.post(endpoint, data=data, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json == {"saved": True, "blob": _state(services, key, night).blob}
+    assert response.json["blob"] != state.blob
+    assert _state(services, key, night).edited
+    assert not _state(services, key, night).approved
+    stale = client.post(endpoint, data=data, headers=headers)
+    assert stale.status_code == 409
+    assert stale.json["saved"] is False
+    data["blob"] = response.json["blob"]
+    assert client.post(endpoint, data=data, headers=headers).status_code == 200
+    data["blob"] = _state(services, key, night).blob
+    data["name" if item_type == "offers" else "question"] = ""
+    invalid = client.post(endpoint, data=data, headers=headers)
+    assert invalid.status_code == 400
+    assert invalid.json["saved"] is False
 
 
 def test_stale_edits_are_rejected(generated, services):
@@ -150,10 +209,26 @@ def test_content_page_puts_gaps_after_content_and_approve_next_to_regenerate(gen
     assert page.index('id="gaps"') < page.index("Approve content")
     assert page.index("Approve content") < page.index("Regenerate this sub-category")
     assert "disclosure_reviewed" not in page
+    assert "data-content-autosave" in page
+    assert "Edit offer" not in page
+    assert "Edit question" not in page
+    assert "Save offer" not in page
+    assert "Save question" not in page
+    assert "Remove offer" in page
+    assert "Remove question" in page
+    assert 'name="phone_numbers"' in page
+    assert 'name="answer"' in page
+    assert "Follow-up to" not in page
 
 
 def test_questions_can_be_added_and_nested(generated, services):
     client, key, night, _cash = generated
+    page = client.get(f"/content/{night}").data.decode()
+    subquestion_form = page.split('id="add-sub-question-q1"', 1)[1].split("</details>", 1)[0]
+    assert "Add a sub-question" in subquestion_form
+    assert 'type="hidden" name="parent" value="q1"' in subquestion_form
+    assert 'name="blob"' in subquestion_form
+    assert "<select" not in subquestion_form
     blob = _state(services, key, night).blob
     client.post(
         f"/content/{night}/questions/new",
@@ -165,22 +240,67 @@ def test_questions_can_be_added_and_nested(generated, services):
         ("Who can stay?", ""),
         ("How long?", "q1"),
     ]
+    page = client.get(f"/content/{night}").data.decode()
+    assert 'class="question depth-1"' in page
+    assert 'id="add-sub-question-q1"' in page
+    assert f'id="add-sub-question-{content.questions[1].ref}"' not in page
+    parent_card = page.split('id="question-q1"', 1)[1].split("</article>", 1)[0]
+    child_card = page.split(f'id="question-{content.questions[1].ref}"', 1)[1].split(
+        "</article>", 1
+    )[0]
+    assert ">Remove question</button>" in parent_card
+    assert ">Remove sub-question</button>" in child_card
+    assert 'type="hidden" name="parent" value=""' in parent_card
+    assert 'type="hidden" name="parent" value="q1"' in child_card
+    assert "<select" not in parent_card + child_card
+
+    response = client.post(
+        f"/content/{night}/questions/{content.questions[1].ref}",
+        data={
+            "blob": _state(services, key, night).blob,
+            "question": "How long?",
+            "answer": "Two weeks.",
+            "parent": "q1",
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 200
+    updated = services.contents.result(key, _state(services, key, night))
+    assert updated.questions[1].parent_ref == "q1"
+    assert updated.questions[1].answer.text == "Two weeks."
 
 
-def test_gap_status_can_be_updated(generated, services):
+def test_gap_action_can_be_updated_without_status_or_contact(generated, services):
     client, key, night, _cash = generated
     gap = next(
         g
         for g in services.exports.plan(services.sessions.get_active(key)).gaps
         if g.subcategory_key == night
     )
+    services.gaps.update(
+        key, gap.id, status="resolved", action="Ask the desk", contact="Program coordinator"
+    )
+
+    for path in ("/review", f"/content/{night}"):
+        page = client.get(path).data.decode()
+        card = page.split(f'id="gap-{gap.id}"', 1)[1].split("</li>", 1)[0]
+        assert "Ask the desk\nContact: Program coordinator" in card
+        assert "Suggested contact" not in card
+        assert 'name="suggested_contact"' not in card
+        assert 'name="status"' not in card
+        assert "badge" not in card
+        assert "<details" not in card
+        assert "data-gap-autosave" in card
+        assert 'type="submit"' not in card
+        assert "data-save-status" in card
+        assert card.index(gap.issue) < card.index("Suggested action")
+        if "Sources:" in card:
+            assert card.index("Suggested action") < card.index("Sources:")
 
     client.post(
         f"/gaps/{gap.id}",
         data={
-            "status": "resolved",
-            "suggested_action": "Ask the desk",
-            "suggested_contact": "",
+            "suggested_action": "Ask the program team at the desk",
             "back": night,
         },
     )
@@ -188,8 +308,50 @@ def test_gap_status_can_be_updated(generated, services):
     updated = next(
         g for g in services.exports.plan(services.sessions.get_active(key)).gaps if g.id == gap.id
     )
-    assert (updated.status, updated.suggested_action) == ("resolved", "Ask the desk")
-    assert client.post("/gaps/unknown-gap", data={"status": "open"}).status_code == 404
+    assert (updated.status, updated.suggested_action) == (
+        "resolved",
+        "Ask the program team at the desk",
+    )
+    assert updated.suggested_contact == ""
+    assert (
+        client.post("/gaps/unknown-gap", data={"suggested_action": "Ask the team"}).status_code
+        == 404
+    )
+
+
+@pytest.mark.parametrize(
+    "action, expected_status", [("Ask the program team", 200), ("", 200), ("x" * 1001, 400)]
+)
+def test_gap_autosave_returns_json_and_validates_input(
+    generated, services, action, expected_status
+):
+    client, key, night, _cash = generated
+    gap = next(
+        gap
+        for gap in services.exports.plan(services.sessions.get_active(key)).gaps
+        if gap.subcategory_key == night
+    )
+    services.gaps.update(key, gap.id, status="open", action="Previous action", contact="")
+    client.get("/review")
+
+    response = client.post(
+        f"/gaps/{gap.id}",
+        data={"suggested_action": action, "back": night},
+        headers={"Accept": "application/json"},
+    )
+
+    assert response.status_code == expected_status
+    assert response.json["saved"] is (expected_status == 200)
+    stored = services.gaps.overrides(key)[gap.id]
+    assert stored["action"] == (action if expected_status == 200 else "Previous action")
+    updated = next(
+        candidate
+        for candidate in services.exports.plan(services.sessions.get_active(key)).gaps
+        if candidate.id == gap.id
+    )
+    assert updated.suggested_action == stored["action"]
+    with client.session_transaction() as session:
+        assert not session.get("_flashes")
 
 
 def test_review_overview_lists_all_gaps_in_one_section(generated, services):
@@ -197,7 +359,7 @@ def test_review_overview_lists_all_gaps_in_one_section(generated, services):
 
     page = client.get("/review").data.decode()
 
-    assert "Address gaps" in page
+    assert "Review gaps" in page
     assert "Not supported by sources" in page
     assert "No supporting content" in page
     gaps = page[page.index('id="gaps"') :]
@@ -206,7 +368,9 @@ def test_review_overview_lists_all_gaps_in_one_section(generated, services):
     assert 'name="back" value=""' in gaps
 
     gap = services.exports.plan(services.sessions.get_active(key)).gaps[0]
-    response = client.post(f"/gaps/{gap.id}", data={"status": "resolved", "back": ""})
+    response = client.post(
+        f"/gaps/{gap.id}", data={"suggested_action": "Ask the program team", "back": ""}
+    )
     assert response.headers["Location"].endswith("/review#gaps")
 
 
