@@ -13,7 +13,10 @@ from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup, Tag
 
 from .chunking import ConvertedUnit, estimate_tokens
 from .inspection import IMAGE_FORMATS, SourceError, SourceFormat
@@ -48,18 +51,82 @@ _HIDDEN_STYLE = re.compile(
     r"\s*(?:!important\s*)?$",
     re.IGNORECASE,
 )
+_HTML_UI_MARKER = re.compile(
+    r"(?:^|[-_\s])(?:flyout|modal|popup|pop-up|breadcrumbs?|newsletter|"
+    r"cookie-(?:banner|consent|notice)|site-(?:menu|navigation))(?=$|[-_\s])",
+    re.IGNORECASE,
+)
+
+
+def _html_roles(tag: "Tag") -> set[str]:
+    role = tag.get("role")
+    return set(role.lower().split()) if isinstance(role, str) else set()
+
+
+def _html_is_main(tag: "Tag") -> bool:
+    return tag.name == "main" or "main" in _html_roles(tag)
+
+
+def _html_is_widget(tag: "Tag") -> bool:
+    ui_roles = {"navigation", "banner", "contentinfo", "dialog", "alertdialog", "search"}
+    if _html_roles(tag) & ui_roles:
+        return True
+    if str(tag.get("aria-modal", "")).strip().lower() == "true":
+        return True
+    classes = tag.get("class")
+    class_names = classes if isinstance(classes, list) else [str(classes or "")]
+    identity = " ".join([str(tag.get("id", "")), *class_names])
+    return bool(_HTML_UI_MARKER.search(identity))
+
+
+def _html_main_content(soup: "BeautifulSoup") -> None:
+    """Keep all nonempty main landmarks, or articles when no main exists.
+
+    Retain the body when no usable landmark exists (common for static FAQ fragments).
+    Article headers/footers and static service sidebars inside main are content, not
+    site chrome; do not discard them just because of their tag names.
+    """
+    candidates = [
+        tag for tag in soup.find_all(True) if _html_is_main(tag) and tag.get_text(strip=True)
+    ]
+    if not candidates:
+        candidates = [tag for tag in soup.find_all("article") if tag.get_text(strip=True)]
+    if not candidates:
+        return
+    selected = [
+        tag for tag in candidates if not any(parent in candidates for parent in tag.parents)
+    ]
+    body = soup.body
+    if body is None:
+        body = soup.new_tag("body")
+        (soup.html or soup).append(body)
+    content = [tag.extract() for tag in selected]
+    body.clear()
+    for tag in content:
+        body.append(tag)
 
 
 def _normalize_html(data: bytes) -> bytes:
+    """Retain static main content/FAQs while excluding site chrome and interactive UI."""
     from bs4 import BeautifulSoup
 
     soup = BeautifulSoup(data, "html.parser")
-    for tag in soup.find_all(["script", "noscript", "style", "template", "nav"]):
-        tag.decompose()
-    for tag in soup.find_all(
-        True, attrs={"role": re.compile(r"^\s*navigation\s*$", re.IGNORECASE)}
-    ):
-        tag.decompose()
+    # Work inside out so removing a parent never leaves decomposed child tags to inspect.
+    for tag in reversed(soup.find_all(True)):
+        site_chrome = tag.name in {"header", "footer"} and not any(
+            parent.name == "article" or _html_is_main(parent) for parent in tag.parents
+        )
+        if (
+            tag.name in {"script", "noscript", "style", "template", "nav"}
+            or (tag.name == "form" and tag.find(["input", "select", "textarea"]) is not None)
+            or _html_is_widget(tag)
+            or site_chrome
+        ):
+            tag.decompose()
+        elif tag.name in {"header", "footer"}:
+            # Docling otherwise skips some text in headers/footers, even within articles.
+            tag.name = "div"
+    _html_main_content(soup)
     for tag in soup.find_all(True):
         tag.attrs.pop("hidden", None)
         tag.attrs.pop("aria-hidden", None)
@@ -303,6 +370,8 @@ class DoclingConverter:
             enable_local_fetch=False,
             fetch_images=False,
             render_page=False,
+            # Site chrome is already removed; text before the first heading is content.
+            infer_furniture=False,
             source_uri=base_url or None,
         )
         return docling.DocumentConverter(

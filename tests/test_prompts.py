@@ -128,3 +128,12 @@ def test_contact_policy_is_shared_by_drafting_and_independent_audit():
     assert "contact_conflicts" in audit and "contact_rewrites" in audit
     assert "value_ids of ALL" in audit
     assert "No rewrite is needed for individual contact list entries" in audit
+
+
+def test_website_controls_are_not_treated_as_public_service_guidance():
+    messages = structure_messages(CONTEXT, SOURCES)
+    system = messages[0]["content"]
+    assert "Website interface text is not service guidance" in system
+    assert "lookup widget" in system
+    assert "Preserve actual service eligibility" in system
+    assert "supported external service link" in system

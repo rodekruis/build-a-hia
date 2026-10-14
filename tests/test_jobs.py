@@ -3,8 +3,9 @@ import json
 import pytest
 from factories import make_text_pdf, session_key_of, upload
 
-from build_a_hia.services.chunking import ConvertedUnit
+from build_a_hia.services.chunking import ConvertedUnit, estimate_tokens
 from build_a_hia.services.conversion import ConversionOutput, DoclingConverter
+from build_a_hia.services.generation import load_source_material
 from build_a_hia.services.inspection import SourceError
 from build_a_hia.services.jobs import ConversionProcessor
 from build_a_hia.services.review import collect_gaps
@@ -303,6 +304,58 @@ def test_html_faq_answers_or_warning_reach_chunks_sources_and_review(
         assert source.limitations[0].encode() in status
         assert len(gaps) == 1 and gaps[0].kind == "conversion"
         assert gaps[0].source_reference == source.reference
+
+
+def test_html_boilerplate_does_not_reach_stored_chunks_token_budget_or_model_sources(
+    workspace_client, services, make_processor
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/support"})
+    key = session_key_of(workspace_client)
+    menu = "<p>Unrelated repeated navigation menu text.</p>" * 1000
+    page = (
+        "<html><head><title>Financial support</title>"
+        '<meta name="date" content="2026-10-14"></head><body>'
+        f"<header>{menu}</header><main><article>"
+        "<header><p>Help for families</p><h1>Financial support</h1></header>"
+        "<p>Apply at the town hall with proof of income.</p>"
+        '<div hidden><p>Read <a href="/documents">the document checklist</a>.</p></div>'
+        '<div class="c-contact-flyout"><p>Enter your postcode into this widget.</p></div>'
+        '<form><label>Your postcode</label><input name="postcode"></form>'
+        "</article></main><footer><p>Newsletter subscription</p></footer></body></html>"
+    ).encode()
+    assert estimate_tokens(page.decode()) > 10000
+    fetcher = FakeFetcher(
+        FetchResult(
+            final_url="https://example.org/support",
+            content_type="text/html",
+            data=page,
+            last_modified="",
+        )
+    )
+
+    make_processor(converter=DoclingConverter(), fetcher=fetcher).process_next()
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert source.title == "Financial support" and source.document_date == "2026-10-14"
+    assert 0 < source.token_count < 100
+    assert source.limitations == []
+    markdown = services.blobs.get(markdown_blob(key, source.id)).decode()
+    chunks = json.loads(services.blobs.get(chunks_blob(key, source.id)))
+    materials, index = load_source_material(services.sources.repository, services.blobs, key)
+    texts = [
+        markdown,
+        *(chunk["text"] for chunk in chunks),
+        *(chunk.text for material in materials for chunk in material.chunks),
+    ]
+    assert index and materials
+    for text in texts:
+        assert "Apply at the town hall with proof of income." in text
+        assert "Help for families" in text
+        assert "https://example.org/documents" in text
+        assert "postcode" not in text
+        assert "navigation menu" not in text
+        assert "Newsletter" not in text
 
 
 def test_fetched_pdf_uses_server_date(workspace_client, services, make_processor):

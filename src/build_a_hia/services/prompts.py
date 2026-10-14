@@ -13,7 +13,7 @@ from .context import ProjectContext
 from .scope import scope_values
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-14.1"
+PROMPT_VERSION = "2026-10-14.2"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -61,6 +61,12 @@ recency. Keep alternative values and their citations in an internal "conflict" i
 not in public text. Do not publish both conflicting numbers or emails in offers, prose \
 or Q&As. Preserve genuinely distinct contacts (different services, locations or roles); \
 absence from a newer source alone is not proof that a contact has been replaced.
+12. Website interface text is not service guidance. Do not reproduce navigation, \
+breadcrumbs, cookie notices, newsletter subscriptions or instructions for widgets and \
+form controls that will not exist in HIA (for example, entering a postcode into the \
+source website's lookup widget). Preserve actual service eligibility, application \
+procedures and public contacts. When an online action is needed, use a supported external \
+service link rather than pretending the source website's controls are available in HIA.
 
 Example of HIA structure and style (version {EXAMPLES_VERSION}). It is fictional: use it only \
 for structure and tone, never as a source of facts.
