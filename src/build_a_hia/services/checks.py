@@ -42,6 +42,8 @@ ISSUE_LABELS = {
     "conflict": "Conflicting sources",
     "outdated": "Possibly outdated",
     "uncertain_translation": "Uncertain translation",
+    "wrong_programme": "Information for another programme",
+    "uncertain_scope": "Programme applicability unclear",
     "unsupported": "Not supported by sources",
     "unverified": "Value not found in sources",
     "structure": "Structure problem",

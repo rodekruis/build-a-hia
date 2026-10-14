@@ -18,8 +18,10 @@ from .prompts import (
     SourceChunk,
     SourceMaterial,
     content_messages,
+    scope_messages,
     structure_messages,
 )
+from .scope import ScopeReview, ScopeReviewError, apply_scope_review, scope_values
 from .sessions import SessionService, WorkspaceSession, utcnow
 from .settings import Settings
 from .sources import SourceRepository, SourceStatus, chunks_blob
@@ -257,9 +259,12 @@ class GenerationProcessor:
         return self._model
 
     def _call(self, session: WorkspaceSession, messages: list[dict[str, str]], schema: Any) -> Any:
+        latest = self._sessions.get_active(session.key)
+        if latest is None:
+            raise JobFailedError("This session is no longer available.")
         prompt_tokens = sum(estimate_tokens(message["content"]) for message in messages)
         needed = prompt_tokens + self._settings.model_max_output_tokens
-        if session.model_tokens_used + needed > self._settings.max_session_model_tokens:
+        if latest.model_tokens_used + needed > self._settings.max_session_model_tokens:
             raise JobFailedError(
                 "This session has used up its AI allowance, so this request was not sent. "
                 "Content you already have stays available; start a new session to generate more."
@@ -312,6 +317,19 @@ class GenerationProcessor:
             raise missing
         messages = content_messages(context, materials, structure, category, subcategory)
         draft = self._call(session, messages, SubcategoryDraft)
+        self._ensure_current(session)
+        if scope_values(draft):
+            review = self._call(
+                session,
+                scope_messages(context, materials, structure, category, subcategory, draft),
+                ScopeReview,
+            )
+            try:
+                draft = apply_scope_review(draft, review)
+            except ScopeReviewError as error:
+                raise JobFailedError(
+                    "The programme-scope check was incomplete. No new content was saved. Try again."
+                ) from error
         content = check_draft(
             draft,
             index,

@@ -5,7 +5,9 @@ import zipfile
 
 from PIL import Image
 
+from build_a_hia.services.content import SubcategoryDraft
 from build_a_hia.services.model import ModelResult
+from build_a_hia.services.scope import scope_values
 from build_a_hia.services.sessions import session_key
 from build_a_hia.services.sources import Source, SourceKind, SourceStatus, chunks_blob
 
@@ -80,6 +82,39 @@ def offer(name: dict, **fields) -> dict:
 
 def question(ref: str, text: str, answer: dict, parent_ref: str = "") -> dict:
     return {"ref": ref, "parent_ref": parent_ref, "question": text, "answer": answer}
+
+
+def scope_response(draft: dict, **verdicts: str) -> dict:
+    """Script scope approval for existing fixtures, with explicit per-value overrides."""
+    return {
+        "verdicts": [
+            {
+                "value_id": value.value_id,
+                "verdict": verdicts.get(value.value_id, "applies"),
+                "reason": "Scripted programme applicability assessment.",
+            }
+            for value in scope_values(SubcategoryDraft.model_validate(draft))
+        ]
+    }
+
+
+def with_scope_reviews(responses: tuple) -> list:
+    """Extend route fixture scripts with scope responses unless explicitly supplied."""
+    result = []
+    for number, response in enumerate(responses):
+        result.append(response)
+        if not isinstance(response, dict) or "offers" not in response:
+            continue
+        review = scope_response(response)
+        if not review["verdicts"]:
+            continue
+        following = responses[number + 1] if number + 1 < len(responses) else None
+        if isinstance(following, Exception) or (
+            isinstance(following, dict) and "verdicts" in following
+        ):
+            continue
+        result.append(review)
+    return result
 
 
 PROPOSAL = {

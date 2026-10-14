@@ -8,7 +8,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-IssueKind = Literal["missing", "conflict", "outdated", "uncertain_translation"]
+IssueKind = Literal[
+    "missing", "conflict", "outdated", "uncertain_translation", "wrong_programme", "uncertain_scope"
+]
 
 
 def new_item_id() -> str:

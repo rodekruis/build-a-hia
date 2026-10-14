@@ -46,6 +46,10 @@ SUGGESTED_ACTIONS = {
     "conflict": "Check with the service which information is current.",
     "outdated": "Confirm that the information is still valid.",
     "uncertain_translation": "Ask a native speaker to check the translation.",
+    "wrong_programme": (
+        "Find evidence for the intended programme; do not reuse another programme's facts."
+    ),
+    "uncertain_scope": "Confirm which programme this information applies to before adding it.",
     "unsupported": "Find a source for this information, or leave it out.",
     "unverified": "Check the value against the source and add it manually if correct.",
     "structure": "Check the order and nesting of the questions.",

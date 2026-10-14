@@ -1,5 +1,7 @@
+from dataclasses import replace
+
 import pytest
-from factories import PROPOSAL, FakeModel, cited, offer, question, session_key_of
+from factories import PROPOSAL, FakeModel, cited, offer, question, scope_response, session_key_of
 
 from build_a_hia.services.drafting import DraftingError
 from build_a_hia.services.generation import GenerationProcessor
@@ -167,7 +169,7 @@ def test_content_is_generated_checked_and_stored(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     assert services.contents.request(_workspace(services, key), [night.key]) == 1
-    model = FakeModel(DRAFT)
+    model = FakeModel(DRAFT, scope_response(DRAFT))
 
     make_processor(model).process_next()
 
@@ -181,6 +183,108 @@ def test_content_is_generated_checked_and_stored(services, make_processor, key):
     task = model.calls[0][0][-1]["content"]
     assert "Sub-category: Night shelter" in task
     assert "Approved HIA structure" in model.calls[0][0][-2]["content"]
+
+
+def test_scope_rejection_is_applied_before_storing_content(services, make_processor, key):
+    structure = _approved_structure(services, make_processor, key)
+    night = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [night.key])
+    review = {
+        "verdicts": [
+            {
+                "value_id": value_id,
+                "verdict": "other_programme",
+                "reason": "This service and its facts belong to another programme.",
+            }
+            for value_id in ("o0.name", "o0.open_weekdays", "o0.phone_numbers.0", "q0.answer")
+        ]
+    }
+    model = FakeModel(DRAFT, review)
+
+    make_processor(model).process_next()
+
+    state = services.contents.state(key, night.key)
+    assert state.status == "done"
+    result = services.contents.result(key, state)
+    assert result.offers == []
+    assert result.questions == []
+    assert any(issue.kind == "wrong_programme" for issue in result.issues)
+    assert len(model.calls) == 2
+    assert _workspace(services, key).model_tokens_used == 3000
+
+
+@pytest.mark.parametrize(
+    "review, expected_error",
+    [
+        ({"verdicts": []}, "programme-scope check was incomplete"),
+        (ModelError("timeout", "The AI model took too long."), "took too long"),
+    ],
+)
+def test_scope_check_failure_does_not_store_unaudited_content(
+    services, make_processor, key, review, expected_error
+):
+    structure = _approved_structure(services, make_processor, key)
+    night = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [night.key])
+
+    make_processor(FakeModel(DRAFT, review)).process_next()
+
+    state = services.contents.state(key, night.key)
+    assert state.status == "failed"
+    assert expected_error in state.error
+    assert not state.blob
+
+
+def test_scope_request_observes_tokens_consumed_by_the_drafting_request(
+    services, make_processor, key
+):
+    structure = _approved_structure(services, make_processor, key)
+    night = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [night.key])
+
+    class BudgetModel(FakeModel):
+        def parse(self, messages, schema):
+            result = super().parse(messages, schema)
+            return replace(result, tokens=services.settings.max_session_model_tokens)
+
+    model = BudgetModel(DRAFT, scope_response(DRAFT))
+    make_processor(model).process_next()
+
+    state = services.contents.state(key, night.key)
+    assert state.status == "failed"
+    assert "used up its AI allowance" in state.error
+    assert not state.blob
+    assert len(model.calls) == 1
+
+
+def test_source_changes_during_scope_check_discard_the_result(services, make_processor, key):
+    structure = _approved_structure(services, make_processor, key)
+    night = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [night.key])
+
+    class ChangingScopeModel(FakeModel):
+        def parse(self, messages, schema):
+            if len(self.calls) == 1:
+                services.sessions.bump_sources_version(key)
+            return super().parse(messages, schema)
+
+    make_processor(ChangingScopeModel(DRAFT, scope_response(DRAFT))).process_next()
+
+    state = services.contents.state(key, night.key)
+    assert state.status == "failed"
+    assert not state.blob
+
+
+def test_empty_draft_does_not_need_a_scope_request(services, make_processor, key):
+    structure = _approved_structure(services, make_processor, key)
+    night = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [night.key])
+    model = FakeModel({"offers": [], "questions": [], "issues": []})
+
+    make_processor(model).process_next()
+
+    assert services.contents.state(key, night.key).status == "done"
+    assert len(model.calls) == 1
 
 
 def test_content_is_queued_in_structure_order(services, make_processor, key):
@@ -198,7 +302,9 @@ def test_request_all_skips_current_content(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     workspace = _workspace(services, key)
     assert services.contents.request(workspace) == 2
-    processor = make_processor(FakeModel(DRAFT, DRAFT))
+    processor = make_processor(
+        FakeModel(DRAFT, scope_response(DRAFT), DRAFT, scope_response(DRAFT))
+    )
     processor.process_next()
     processor.process_next()
 
@@ -230,7 +336,7 @@ def test_structure_change_during_generation_fails_the_job(services, make_process
             services.structures.approve(key, version + 1)
             return super().parse(messages, schema)
 
-    make_processor(EditingModel(DRAFT)).process_next()
+    make_processor(EditingModel(DRAFT, scope_response(DRAFT))).process_next()
 
     state = services.contents.state(key, night.key)
     assert state.status == "failed"

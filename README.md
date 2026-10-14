@@ -9,9 +9,11 @@ Filling that sheet by hand from guidance documents, service lists and web pages 
 1. **Context**: describe the crisis, target group, locations and the output language.
 2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
 3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve.
-4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap.
+4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap. A separate AI check assesses each populated field against the intended programme and audience: facts supported only for another programme, or with unclear applicability, are withheld and kept as cited gaps for staff follow-up. This check uses an additional request (and AI allowance) for each nonempty draft; failed or incomplete checks do not save new content.
 5. **Review**: staff check each sub-category against the cited evidence, edit it and approve it. Gaps (missing, conflicting or outdated information, failed sources) get a status, a suggested action and a contact.
 6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
+
+Programme applicability is a semantic AI assessment, not a guarantee of factual correctness; staff must still review the evidence. Existing drafts are not retrospectively rechecked: regenerate them to run the independent scope check. Approving a checked draft does not restore withheld facts; staff can add corrected content manually after verifying programme-specific evidence.
 
 Work happens in a temporary, anonymous session: there are no accounts, and all documents and drafts are deleted after 2 hours of inactivity or 24 hours at the latest.
 
@@ -25,7 +27,7 @@ flowchart LR
     cleanup[hia-cleanup job<br>hourly] --> storage
 ```
 
-The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
+The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry, followed by an independent programme-scope check for nonempty content drafts. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
 
 ## Requirements
 

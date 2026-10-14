@@ -1,10 +1,21 @@
 import io
 
 import pytest
-from factories import DRAFT_FOR_ROUTES, PROPOSAL, FakeModel, cited, offer, session_key_of
+from factories import (
+    DRAFT_FOR_ROUTES,
+    PROPOSAL,
+    FakeModel,
+    cited,
+    offer,
+    question,
+    scope_response,
+    session_key_of,
+    with_scope_reviews,
+)
 from openpyxl import load_workbook
 
 from build_a_hia.services.generation import GenerationProcessor
+from build_a_hia.services.scope import ScopeReview
 
 EMPTY_DRAFT = {"offers": [], "questions": [], "issues": []}
 
@@ -17,16 +28,24 @@ class RoutingModel(FakeModel):
         self.by_subcategory = by_subcategory
 
     def parse(self, messages, schema):
+        if schema is ScopeReview:
+            self.responses.insert(0, scope_response(self.last_draft))
+            return super().parse(messages, schema)
         task = messages[-1]["content"]
         name = next(name for name in self.by_subcategory if f"Sub-category: {name}" in task)
-        self.responses.insert(0, self.by_subcategory[name])
+        self.last_draft = self.by_subcategory[name]
+        self.responses.insert(0, self.last_draft)
         return super().parse(messages, schema)
 
 
 @pytest.fixture
 def run_jobs(services):
     def run(*responses, by_subcategory: dict[str, dict] | None = None) -> None:
-        model = RoutingModel(by_subcategory) if by_subcategory else FakeModel(*responses)
+        model = (
+            RoutingModel(by_subcategory)
+            if by_subcategory
+            else FakeModel(*with_scope_reviews(responses))
+        )
         processor = GenerationProcessor(
             table=services.table,
             blobs=services.blobs,
@@ -288,6 +307,62 @@ def test_conversion_warning_reaches_review_and_internal_workbook(generated, serv
     values = [str(cell.value) for row in workbook["Gaps"] for cell in row]
     assert any(limitation in value for value in values)
     assert "Conversion problem" in values
+
+
+def test_scope_rejections_stay_out_of_approved_public_export_but_keep_cited_gaps(
+    generated, services, run_jobs
+):
+    client, key, night, cash = generated
+    draft = {
+        "offers": [
+            offer(
+                cited("Night shelter", "S1-p1-c1"),
+                need_to_know=cited("250 TL monthly per person.", "S1-p1-c1"),
+            ),
+            offer(cited("T-SUY Projesi", "S1-p1-c1")),
+        ],
+        "questions": [question("q1", "ما قيمة المساعدة؟", cited("250 ليرة شهرياً.", "S1-p1-c1"))],
+        "issues": [],
+    }
+    review = scope_response(
+        draft,
+        **{
+            "o0.need_to_know": "other_programme",
+            "o1.name": "other_programme",
+            "q0.answer": "other_programme",
+        },
+    )
+    client.post(f"/content/{night}/regenerate")
+    run_jobs(draft, review)
+
+    assert b"Information for another programme" in client.get("/review").data
+    _approve_all(client, services, key, night, cash)
+    assert _state(services, key, night).approved
+    client.post("/download")
+    latest = services.exports.latest(key)
+
+    def values(filename):
+        response = client.get(f"/download/{latest['snapshot']}/{filename}")
+        assert response.status_code == 200
+        workbook = load_workbook(io.BytesIO(response.data))
+        return "\n".join(
+            str(cell.value)
+            for sheet in workbook.worksheets
+            for row in sheet
+            for cell in row
+            if cell.value is not None
+        )
+
+    public = values("hia.xlsx")
+    assert "Night shelter" in public
+    assert "250" not in public
+    assert "T-SUY" not in public
+    assert "ما قيمة المساعدة" not in public
+    internal = values("review-internal.xlsx")
+    assert "Information for another programme" in internal
+    assert "S1-p1-c1" in internal
+    assert "T-SUY Projesi" in internal
+    assert "Find evidence for the intended programme" in internal
 
 
 def test_downloads_are_isolated_and_replaced(generated, services, app):
