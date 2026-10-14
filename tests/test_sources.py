@@ -1,11 +1,13 @@
 import io
 import json
 
+import pytest
 from factories import CONTEXT_FORM, make_docx, make_png, session_key_of, upload
 
 from build_a_hia import create_app
 from build_a_hia.config import TestConfig
-from build_a_hia.services.sources import SourceStatus, original_blob
+from build_a_hia.services.sources import Source, SourceStatus, original_blob
+from build_a_hia.services.storage import StoredEntity
 
 
 def _sources(services, client):
@@ -173,6 +175,110 @@ def _mark(services, client, source_id, **changes):
         return True
 
     services.sources.repository.mutate(session_key_of(client), source_id, apply)
+
+
+@pytest.mark.parametrize("endpoint", ["/sources", "/sources/status", "detail"])
+def test_converted_sources_with_limitations_show_warning_badge(
+    workspace_client, services, pdf_bytes, endpoint
+):
+    upload(workspace_client, "scan.pdf", pdf_bytes)
+    [source] = _sources(services, workspace_client)
+    _mark(
+        services,
+        workspace_client,
+        source.id,
+        status=SourceStatus.CONVERTED,
+        limitations=["Very little text could be read from page(s) 1."],
+    )
+
+    response = workspace_client.get(f"/sources/{source.id}" if endpoint == "detail" else endpoint)
+
+    assert b"Converted with warnings" in response.data
+    assert b"badge-warning" in response.data
+    assert b"Very little text" in response.data
+
+
+def test_ocr_language_is_validated_persisted_and_editable_before_retry(
+    workspace_client, services, pdf_bytes
+):
+    response = workspace_client.post(
+        "/sources/files",
+        data={
+            "files": [(io.BytesIO(pdf_bytes), "scan.pdf")],
+            "ocr_language": "ar",
+        },
+    )
+    assert response.status_code == 302
+    [source] = _sources(services, workspace_client)
+    assert source.ocr_language == "ar"
+    assert b"Arabic" in workspace_client.get(f"/sources/{source.id}").data
+    response = workspace_client.post(f"/sources/{source.id}", data={"title": "Renamed scan"})
+    assert response.status_code == 302
+    assert _sources(services, workspace_client)[0].ocr_language == "ar"
+
+    response = workspace_client.post(
+        f"/sources/{source.id}",
+        data={
+            "title": "Scan",
+            "ocr_language": "uk",
+        },
+    )
+    assert response.status_code == 400
+    assert _sources(services, workspace_client)[0].ocr_language == "ar"
+    workspace_client.post(f"/sources/{source.id}/cancel")
+    response = workspace_client.post(
+        f"/sources/{source.id}",
+        data={
+            "title": "Scan",
+            "ocr_language": "uk",
+        },
+    )
+    assert response.status_code == 302
+    workspace_client.post(f"/sources/{source.id}/retry")
+    assert _sources(services, workspace_client)[0].ocr_language == "uk"
+
+    workspace_client.post(
+        "/sources/files",
+        data={
+            "files": [(io.BytesIO(pdf_bytes), "invalid.pdf")],
+            "ocr_language": "invalid",
+        },
+    )
+    assert len(_sources(services, workspace_client)) == 1
+    response = workspace_client.post(
+        "/sources/url",
+        data={
+            "url": "https://example.org/scan.pdf",
+            "ocr_language": "ar",
+        },
+    )
+    assert response.status_code == 302
+    assert _sources(services, workspace_client)[1].ocr_language == "ar"
+
+
+def test_legacy_sources_without_ocr_language_remain_loadable(workspace_client, services, pdf_bytes):
+    upload(workspace_client, "native.pdf", pdf_bytes)
+    [source] = _sources(services, workspace_client)
+    data = source.to_data()
+    del data["ocr_language"]
+    loaded = Source.from_stored(source.id, StoredEntity(data=data, etag="legacy"))
+    assert loaded.ocr_language == "en"
+    assert loaded.status == SourceStatus.QUEUED
+
+
+def test_converted_warning_source_remains_usable(workspace_client, services, pdf_bytes):
+    upload(workspace_client, "scan.pdf", pdf_bytes)
+    [source] = _sources(services, workspace_client)
+    _mark(
+        services,
+        workspace_client,
+        source.id,
+        status=SourceStatus.CONVERTED,
+        token_count=10,
+        limitations=["Very little text."],
+    )
+    workspace_client.post("/sources/approve")
+    assert services.sessions.get_active(session_key_of(workspace_client)).sources_approved
 
 
 def test_approval_requires_finished_conversion(workspace_client, services, pdf_bytes):

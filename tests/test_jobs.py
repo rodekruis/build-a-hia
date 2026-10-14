@@ -24,10 +24,12 @@ class FakeConverter:
         self.on_progress = on_progress
         self.calls = 0
         self.base_urls: list[str] = []
+        self.ocr_languages: list[str] = []
 
-    def convert(self, path, source_format, progress, *, base_url=""):
+    def convert(self, path, source_format, progress, *, base_url="", ocr_language="en"):
         self.calls += 1
         self.base_urls.append(base_url)
+        self.ocr_languages.append(ocr_language)
         assert path.exists()
         progress(0, 2)
         if self.on_progress:
@@ -93,6 +95,25 @@ def test_converted_source_is_chunked_and_original_removed(services, make_process
 
 def test_empty_queue_returns_false(make_processor):
     assert make_processor().process_next() is False
+
+
+def test_selected_ocr_language_reaches_converter(services, make_processor, uploaded):
+    key, source = uploaded
+    services.sources.cancel(key, source.id)
+    services.sources.update_metadata(
+        key,
+        source.id,
+        title=source.title,
+        document_date="",
+        ocr_language="ar",
+    )
+    services.sources.retry(key, source.id)
+    converter = FakeConverter()
+    processor = make_processor(converter=converter)
+    while processor.process_next():
+        pass
+    assert converter.ocr_languages == ["ar"]
+    assert services.sources.get(key, source.id).ocr_language == "ar"
 
 
 def test_conversion_invalidates_source_approval(services, make_processor, uploaded):

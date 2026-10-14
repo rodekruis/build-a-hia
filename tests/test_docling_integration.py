@@ -1,11 +1,12 @@
 """Real Docling conversions. Slow and downloads models: run with `pytest -m docling`."""
 
 import pytest
+from bidi.algorithm import get_display
 from factories import make_docx, make_text_pdf, make_xlsx
 from PIL import Image, ImageDraw, ImageFont
 
 from build_a_hia.services.conversion import DoclingConverter
-from build_a_hia.services.inspection import SourceFormat
+from build_a_hia.services.inspection import SourceError, SourceFormat
 
 pytestmark = pytest.mark.docling
 
@@ -40,6 +41,61 @@ def test_scanned_page_is_read_with_ocr(converter, tmp_path):
     output = converter.convert(path, SourceFormat.PNG, _ignore_progress)
 
     assert "SHELTER" in " ".join(unit.markdown for unit in output.units).upper()
+
+
+def test_image_only_pdf_is_read_with_ocr(converter, tmp_path):
+    image = Image.new("RGB", (1800, 800), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=65)
+    for index, text in enumerate(
+        [
+            "FREE SHELTER AT CENTRAL STATION",
+            "Registration opens every Monday.",
+            "Call 12345 for more information.",
+        ]
+    ):
+        draw.text((40, 100 + 160 * index), text, fill="black", font=font)
+    path = tmp_path / "scan.pdf"
+    image.save(path, "PDF")
+
+    output = converter.convert(path, SourceFormat.PDF, _ignore_progress)
+
+    assert [unit.page for unit in output.units] == [1]
+    text = output.units[0].markdown.upper()
+    assert "SHELTER" in text and "12345" in text
+    assert output.limitations == []
+
+
+def test_arabic_image_only_pdf_uses_selected_recognizer(converter, tmp_path):
+    for name in ("arial.ttf", "DejaVuSans.ttf"):
+        try:
+            font = ImageFont.truetype(name, 70)
+            break
+        except OSError:
+            continue
+    else:
+        pytest.skip("An Arabic-capable Arial or DejaVu Sans system font is required.")
+    image = Image.new("RGB", (1800, 800), "white")
+    draw = ImageDraw.Draw(image)
+    # Pre-shaped synthetic text also works on Pillow builds without libraqm.
+    text = get_display("ﻣﺮﻛﺰ ﺍﻟﻤﺴﺎﻋﺪﺓ")
+    for y in (100, 300, 500):
+        draw.text((200, y), text, fill="black", font=font)
+    path = tmp_path / "arabic.pdf"
+    image.save(path, "PDF")
+
+    output = converter.convert(path, SourceFormat.PDF, _ignore_progress, ocr_language="ar")
+
+    assert [unit.page for unit in output.units] == [1]
+    assert "المساعدة" in output.units[0].markdown
+
+
+def test_blank_image_only_pdf_fails_instead_of_returning_placeholders(converter, tmp_path):
+    path = tmp_path / "blank.pdf"
+    Image.new("RGB", (1000, 1000), "white").save(path, "PDF")
+    with pytest.raises(SourceError) as error:
+        converter.convert(path, SourceFormat.PDF, _ignore_progress)
+    assert error.value.code == "no_text"
 
 
 def test_docx_and_xlsx_are_converted(converter, tmp_path):

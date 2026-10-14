@@ -33,6 +33,7 @@
           {{ upload_form.files.label }}
           {{ upload_form.files(accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp") }}
         </div>
+        {{ field(upload_form.ocr_language, "Used for all files in this upload. Upload different scanned languages separately. OCR does not translate text.") }}
         <div class="actions">
           <button type="submit" class="button">Upload</button>
         </div>
@@ -49,6 +50,7 @@
       <form method="post" action="{{ url_for('workspace.add_url') }}" novalidate>
         {{ csrf(url_form) }}
         {{ field(url_form.url) }}
+        {{ field(url_form.ocr_language, "Used if the link points to a scanned PDF or image. OCR does not translate text.") }}
         <div class="actions">
           <button type="submit" class="button">Add address</button>
         </div>

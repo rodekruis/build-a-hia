@@ -66,6 +66,16 @@ The generate worker needs `FOUNDRY_ENDPOINT` and `FOUNDRY_DEPLOYMENT` (a deploym
 
 The app is available at http://127.0.0.1:5000. The health endpoint is `/health`. With `HIA_STORAGE_BACKEND=local`, sessions, files and queue messages are stored in `.hia-storage/` (git-ignored). The first conversion downloads Docling models; run `uv run python -m build_a_hia.worker prefetch-models` to download them up front.
 
+### Scanned documents and OCR
+
+Choose **Language of scanned text** when uploading files or adding a document link. This is the source's recognition language, not the HIA output language; OCR does not translate. The default is English. Arabic, Chinese, French, German, Spanish, Portuguese, Dutch, Turkish, Russian and Ukrainian are also supported. Each source uses one RapidOCR recognizer; Latin languages share a model, as do Russian and Ukrainian. Upload different scanned languages separately. Mixed-language documents should use their main scanned language and need careful review.
+
+PDF pages with no readable text or fewer than 30 estimated readable-text tokens are retried with full-page OCR. Image placeholders and Markdown formatting do not count as readable text. Images use OCR immediately. If OCR produces less text than native extraction, the native text is retained. The threshold is a warning heuristic, not a guarantee of completeness or recognition accuracy; token estimates use UTF-8 bytes and vary across scripts.
+
+Sources with sparse text, unreadable pages, incomplete OCR or partial conversion show **Converted with warnings**. Review their converted-text preview before approving them. Their limitations become **Conversion problem** gaps in review and in `review-internal.xlsx`. Sources without any readable text fail and provide no citable passages. Sources with warnings remain usable; failed sources follow the existing explicit approval rules.
+
+For failed or cancelled sources, save a different scanned-text language on the source details page before retrying. Cancel an active conversion before changing its language. Successful conversion deletes the original bytes, so converted sources, including older placeholder-only results, must be removed and added again to reconvert.
+
 ## Background jobs
 
 `python -m build_a_hia.worker` has four commands:
@@ -100,6 +110,8 @@ uv run ty check
 ```
 
 Tests that run real Docling conversions are excluded by default. Run them with `uv run python -m pytest -m docling`.
+
+The integration suite includes synthetic image-only English and Arabic PDFs and a blank-page regression. The Arabic fixture uses an installed Arial or DejaVu Sans font and is skipped if neither is available; no third-party PDF downloads are needed. Production verification should also run conversions with prefetched models and no network access.
 
 Ruff also enforces Google-style docstrings (`D`) and Bandit security rules (`S`) for application code.
 

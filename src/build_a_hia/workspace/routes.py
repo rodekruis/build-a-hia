@@ -216,7 +216,12 @@ def upload_files():
     for upload in uploads:
         data = upload.stream.read(hia.settings.max_file_bytes + 1)
         try:
-            source = hia.sources.add_file(workspace, filename=upload.filename or "", data=data)
+            source = hia.sources.add_file(
+                workspace,
+                filename=upload.filename or "",
+                data=data,
+                ocr_language=form.ocr_language.data or "",
+            )
         except SourceError as error:
             flash(f"{upload.filename}: {error.message}", "error")
         else:
@@ -233,7 +238,9 @@ def add_url():
     if not form.validate_on_submit():
         return _render_sources(workspace, 400, url_form=form)
     try:
-        source = services().sources.add_url(workspace, url=form.url.data or "")
+        source = services().sources.add_url(
+            workspace, url=form.url.data or "", ocr_language=form.ocr_language.data or ""
+        )
     except SourceError as error:
         cast("list[str]", form.url.errors).append(error.message)
         return _render_sources(workspace, 400, url_form=form)
@@ -251,22 +258,28 @@ def source_detail(source_id: str):
         form = SourceDetailsForm(
             data={
                 "title": source.title,
+                "ocr_language": source.ocr_language,
                 "document_date": (
                     date.fromisoformat(source.document_date) if source.document_date else None
                 ),
             }
         )
     else:
-        form = SourceDetailsForm()
+        form = SourceDetailsForm(data={"ocr_language": source.ocr_language})
     if form.validate_on_submit():
-        services().sources.update_metadata(
-            workspace.key,
-            source.id,
-            title=form.title.data or "",
-            document_date=_iso(form.document_date.data),
-        )
-        flash("Source details saved.", "success")
-        return redirect(url_for("workspace.source_detail", source_id=source.id))
+        try:
+            services().sources.update_metadata(
+                workspace.key,
+                source.id,
+                title=form.title.data or "",
+                document_date=_iso(form.document_date.data),
+                ocr_language=form.ocr_language.data,
+            )
+        except SourceError as error:
+            cast("list[str]", form.ocr_language.errors).append(error.message)
+        else:
+            flash("Source details saved.", "success")
+            return redirect(url_for("workspace.source_detail", source_id=source.id))
 
     preview = ""
     if source.chunk_count:
@@ -283,6 +296,7 @@ def source_detail(source_id: str):
         preview=preview,
         preview_chars=PREVIEW_CHARS,
         action_form=ActionForm(),
+        ocr_language_label=language_label(source.ocr_language),
     ), status
 
 

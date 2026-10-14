@@ -265,6 +265,31 @@ def test_downloads_are_separate_and_clean(generated, services):
     assert latest["snapshot"] in review["Gaps"]["A1"].value
 
 
+def test_conversion_warning_reaches_review_and_internal_workbook(generated, services):
+    client, key, night, cash = generated
+    [source] = services.sources.list_for(key)
+    limitation = "Very little text could be read from page(s) 2."
+
+    def warn(source):
+        source.limitations = [limitation]
+        return True
+
+    services.sources.repository.mutate(key, source.id, warn)
+    page = client.get("/review").data
+    assert b"Conversion problem" in page and limitation.encode() in page
+    plan = services.exports.plan(services.sessions.get_active(key))
+    gap = next(gap for gap in plan.gaps if gap.kind == "conversion")
+    assert gap.source_reference == source.reference
+    _approve_all(client, services, key, night, cash)
+    client.post("/download")
+    latest = services.exports.latest(key)
+    response = client.get(f"/download/{latest['snapshot']}/review-internal.xlsx")
+    workbook = load_workbook(io.BytesIO(response.data))
+    values = [str(cell.value) for row in workbook["Gaps"] for cell in row]
+    assert any(limitation in value for value in values)
+    assert "Conversion problem" in values
+
+
 def test_downloads_are_isolated_and_replaced(generated, services, app):
     client, key, night, cash = generated
     _approve_all(client, services, key, night, cash)

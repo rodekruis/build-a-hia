@@ -12,6 +12,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
+from .conversion import validate_ocr_language
 from .inspection import SourceError, inspect_content
 from .sessions import SessionService, WorkspaceSession, session_blob_prefix, utcnow
 from .settings import Settings
@@ -103,6 +104,7 @@ class Source:
         error_code: Machine-readable code of the last failure.
         error_message: User-facing message of the last failure.
         limitations: User-facing notes on content that could not be converted.
+        ocr_language: Language selected for recognition of scanned text.
         version: Processing version; bumped on cancel and retry so that jobs for older
             versions discard their results.
         etag: Table entity ETag for optimistic concurrency; not stored in the entity data.
@@ -129,6 +131,7 @@ class Source:
     error_code: str = ""
     error_message: str = ""
     limitations: list[str] = field(default_factory=list)
+    ocr_language: str = "en"
     version: int = 1
     etag: str = ""
 
@@ -170,6 +173,7 @@ class Source:
             "error_code": self.error_code,
             "error_message": self.error_message,
             "limitations": json.dumps(self.limitations),
+            "ocr_language": self.ocr_language,
             "version": self.version,
         }
 
@@ -199,6 +203,7 @@ class Source:
             error_code=data.get("error_code", ""),
             error_message=data.get("error_message", ""),
             limitations=json.loads(data.get("limitations") or "[]"),
+            ocr_language=data.get("ocr_language", "en"),
             version=int(data.get("version", 1)),
             etag=stored.etag,
         )
@@ -360,6 +365,7 @@ class SourceService:
         data: bytes,
         title: str = "",
         document_date: str = "",
+        ocr_language: str = "en",
     ) -> Source:
         """Validate and store an uploaded file, then queue it for conversion.
 
@@ -373,6 +379,7 @@ class SourceService:
             data: File content.
             title: Optional title entered by the user.
             document_date: Optional document date entered by the user.
+            ocr_language: Language to use for scanned text.
 
         Returns:
             The new, queued source.
@@ -384,6 +391,7 @@ class SourceService:
                 could not be queued (the source is then stored as failed).
         """
         settings = self._settings
+        validate_ocr_language(ocr_language)
         existing = self.list_for(session.key)
         self._check_source_count(existing)
         if len(data) > settings.max_file_bytes:
@@ -413,6 +421,7 @@ class SourceService:
             filename=safe_filename,
         )
         source.format = inspected.format.value
+        source.ocr_language = ocr_language
         source.size_bytes = len(data)
         source.page_count = inspected.page_count
         _set_date(source, document_date, "user")
@@ -424,7 +433,13 @@ class SourceService:
         return source
 
     def add_url(
-        self, session: WorkspaceSession, *, url: str, title: str = "", document_date: str = ""
+        self,
+        session: WorkspaceSession,
+        *,
+        url: str,
+        title: str = "",
+        document_date: str = "",
+        ocr_language: str = "en",
     ) -> Source:
         """Validate a web address and queue it to be downloaded and converted.
 
@@ -436,6 +451,7 @@ class SourceService:
             url: Web address entered by the user.
             title: Optional title entered by the user; otherwise taken from the download.
             document_date: Optional document date entered by the user.
+            ocr_language: Language to use if the address contains scanned text.
 
         Returns:
             The new, queued source.
@@ -445,21 +461,29 @@ class SourceService:
                 ``too_many_sources``, or ``queue_unavailable`` if the job could not be queued
                 (the source is then stored as failed).
         """
+        validate_ocr_language(ocr_language)
         target = parse_url(url)
         self._check_source_count(self.list_for(session.key))
         source = self._new_source(
             session, kind=SourceKind.URL, title=clean_title(title), filename=""
         )
         source.url = target.url
+        source.ocr_language = ocr_language
         _set_date(source, document_date, "user")
         self.repository.insert(session.key, source)
         self._enqueue(session.key, source)
         return source
 
     def update_metadata(
-        self, session_key: str, source_id: str, *, title: str, document_date: str
+        self,
+        session_key: str,
+        source_id: str,
+        *,
+        title: str,
+        document_date: str,
+        ocr_language: str | None = None,
     ) -> Source | None:
-        """Update the title and user-entered document date of a source.
+        """Update source metadata and, before retrying, its scanned-text language.
 
         Args:
             session_key: Key of the session that owns the source.
@@ -467,15 +491,27 @@ class SourceService:
             title: New title; an empty title keeps the current one.
             document_date: New document date; an empty value clears a user-entered date but
                 keeps a date found in metadata.
+            ocr_language: New OCR language, allowed only before retrying failed/cancelled work.
 
         Returns:
             The updated source, or None if it does not exist.
 
         Raises:
             ConflictError: If the source kept changing concurrently.
+            SourceError: If the OCR language is invalid or cannot be changed in this state.
         """
+        if ocr_language is not None:
+            validate_ocr_language(ocr_language)
 
         def apply(source: Source) -> bool:
+            if ocr_language is not None and ocr_language != source.ocr_language:
+                if not source.can_retry:
+                    raise SourceError(
+                        "ocr_language_locked",
+                        "Cancel processing before changing the scanned-text language. "
+                        "For converted sources, remove and add the source again.",
+                    )
+                source.ocr_language = ocr_language
             source.title = clean_title(title) or source.title
             if document_date:
                 _set_date(source, document_date, "user")
