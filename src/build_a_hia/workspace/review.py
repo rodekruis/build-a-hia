@@ -4,7 +4,7 @@ import logging
 import re
 from collections.abc import Callable
 
-from flask import Blueprint, abort, flash, redirect, render_template, url_for
+from flask import Blueprint, abort, flash, jsonify, redirect, render_template, request, url_for
 from werkzeug.wrappers import Response
 
 from ..services.content import OFFER_LIST_FIELDS, OFFER_TEXT_FIELDS, GeneratedContent
@@ -69,28 +69,38 @@ def _change(
 ) -> Response:
     _check(_NODE_KEY, key)
     workspace = _workspace()
+    autosave = request.accept_mimetypes.best == "application/json"
+
+    def not_saved(message: str, status: int = 400) -> Response:
+        if autosave:
+            response = jsonify(saved=False, message=message)
+            response.status_code = status
+            return response
+        flash(message, "error")
+        return _to_content(key, anchor)
+
     if not form.validate_on_submit():
         message = next(iter(form.errors.values()), ["Check the form."])[0]
-        flash(f"Not saved: {message}", "error")
-        return _to_content(key, anchor)
+        return not_saved(f"Not saved: {message}")
     hia = services()
     state = hia.contents.state(workspace.key, key)
     if state is None or not state.blob:
         abort(404)
     if state.blob != form.blob.data:
-        flash("This content changed in the meantime. Review it and try again.", "error")
-        return _to_content(key, anchor)
+        return not_saved("This content changed in the meantime. Reload and try again.", 409)
     content = hia.contents.result(workspace.key, state)
     if content is None:
         abort(404)
     try:
         change(content)
-        hia.contents.save_edit(workspace.key, key, state.blob, content)
+        updated = hia.contents.save_edit(workspace.key, key, state.blob, content)
     except (ReviewError, DraftingError) as error:
-        flash(error.message, "error")
+        return not_saved(error.message)
     except ConflictError:
-        flash("Busy; try again.", "error")
+        return not_saved("Busy; try again.", 409)
     else:
+        if autosave:
+            return jsonify(saved=True, blob=updated.blob)
         flash(success, "success")
     return _to_content(key, anchor)
 
@@ -220,34 +230,42 @@ def decide_empty(key: str):
 @review_bp.post("/gaps/<gap_id>")
 @require_workspace
 def update_gap(gap_id: str):
-    """Update a gap's status and suggestions; 404 for gaps not in this session's plan.
+    """Update a gap's suggested action; 404 for gaps not in this session's plan.
 
     Redirects back to the sub-category page when a valid node key is given, else to the review.
     """
     _check(_REF, gap_id)
     workspace = _workspace()
     form = GapForm()
+    autosave = request.accept_mimetypes.best == "application/json"
     back = form.back.data if _NODE_KEY.match(form.back.data or "") else ""
     target = (
         _to_content(back, "gaps") if back else redirect(url_for("review.overview", _anchor="gaps"))
     )
     if not form.validate_on_submit():
+        if autosave:
+            return jsonify(saved=False, message="Check the suggested action and try again."), 400
         flash("Check the form and try again.", "error")
         return target
     hia = services()
-    if gap_id not in {gap.id for gap in hia.exports.plan(workspace).gaps}:
+    gap = next((gap for gap in hia.exports.plan(workspace).gaps if gap.id == gap_id), None)
+    if gap is None:
         abort(404)
     try:
         hia.gaps.update(
             workspace.key,
             gap_id,
-            status=form.status.data or "open",
+            status=gap.status,
             action=form.suggested_action.data or "",
-            contact=form.suggested_contact.data or "",
+            contact="",
         )
     except ReviewError as error:
+        if autosave:
+            return jsonify(saved=False, message=error.message), 400
         flash(error.message, "error")
     else:
+        if autosave:
+            return jsonify(saved=True)
         flash("Gap updated.", "success")
     return target
 
@@ -268,7 +286,6 @@ def overview():
         subcategories=sorted(plan.subcategories, key=lambda sub: sub.approved),
         reviewed=sum(sub.approved for sub in plan.subcategories),
         gaps=sorted(plan.gaps, key=lambda gap: gap.status != "open"),
-        gap_form=GapForm(formdata=None),
     )
 
 
