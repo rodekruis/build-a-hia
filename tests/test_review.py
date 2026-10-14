@@ -99,6 +99,27 @@ def test_reverting_an_edit_clears_the_flag(content):
     assert description.evidence == [EVIDENCE]
 
 
+def test_editing_and_reverting_inherited_address_preserves_original_provenance(content):
+    content.offers[0].address = FieldValue(
+        text="Central Street 1", evidence=[EVIDENCE], inherited_from="RLF"
+    )
+    update_offer(content, "o1", _offer_values(address="Central Street 2"))
+    address = content.offers[0].address
+    assert address.edited and address.original == "Central Street 1"
+    assert address.inherited_from == "RLF"
+    assert address.evidence == [EVIDENCE]
+    update_offer(content, "o1", _offer_values(address="Central Street 1"))
+    assert not content.offers[0].address.edited
+    assert content.offers[0].address.inherited_from == "RLF"
+
+
+def test_specific_reviewer_contact_is_not_marked_as_inherited(content):
+    content.offers[0].phone_numbers[0].inherited_from = "RLF"
+    update_offer(content, "o1", _offer_values(phone_numbers="1545"))
+    assert content.offers[0].phone_numbers[0].edited
+    assert content.offers[0].phone_numbers[0].inherited_from == ""
+
+
 def test_offer_values_are_validated(content):
     with pytest.raises(ReviewError):
         update_offer(content, "o1", _offer_values(emails="not-an-email"))

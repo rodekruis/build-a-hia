@@ -89,6 +89,7 @@ def scope_response(draft: dict, **verdicts: str) -> dict:
     return {
         "contact_conflicts": [],
         "contact_rewrites": [],
+        "shared_contacts": [],
         "verdicts": [
             {
                 "value_id": value.value_id,

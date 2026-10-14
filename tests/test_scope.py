@@ -44,6 +44,7 @@ def _review(draft, **rejected):
         {
             "contact_conflicts": [],
             "contact_rewrites": [],
+            "shared_contacts": [],
             "verdicts": [
                 {
                     "value_id": value.value_id,

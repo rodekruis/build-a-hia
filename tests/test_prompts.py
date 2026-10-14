@@ -137,3 +137,24 @@ def test_website_controls_are_not_treated_as_public_service_guidance():
     assert "lookup widget" in system
     assert "Preserve actual service eligibility" in system
     assert "supported external service link" in system
+
+
+def test_shared_contact_check_has_offer_identity_empty_fields_and_scope_safeguards():
+    draft = SubcategoryDraft.model_validate(
+        {
+            "offers": [offer(cited("Family messages", "S1-p1-c1"))],
+            "questions": [],
+            "issues": [],
+        }
+    )
+    category = STRUCTURE.categories[0]
+    messages = scope_messages(CONTEXT, SOURCES, STRUCTURE, category, category.children[0], draft)
+    data = messages[-1]["content"]
+    assert '"offer_index": 0' in data
+    assert '"emails": []' in data
+    audit = messages[-2]["content"]
+    assert "shared_contacts" in audit
+    assert "originally empty" in audit
+    assert "another programme" in audit
+    assert "contact_conflicts" in audit
+    assert "Do not invent missing hours or addresses" in audit

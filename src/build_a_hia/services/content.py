@@ -155,12 +155,14 @@ class FieldValue(BaseModel):
         edited: Whether a reviewer changed or added the text; evidence then refers to the
             original text only.
         original: Text before the first reviewer edit; "" for reviewer-added values.
+        inherited_from: Programme whose shared contact supplied this field, or "".
     """
 
     text: str = ""
     evidence: list[Evidence] = Field(default_factory=list)
     edited: bool = False
     original: str = ""
+    inherited_from: str = ""
 
 
 OFFER_TEXT_FIELDS = (

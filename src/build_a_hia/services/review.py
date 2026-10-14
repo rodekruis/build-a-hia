@@ -76,8 +76,14 @@ def _edited(old: FieldValue, text: str) -> FieldValue:
         return old
     original = old.original if old.edited else old.text
     if old.edited and text == original:
-        return FieldValue(text=text, evidence=old.evidence)
-    return FieldValue(text=text, evidence=old.evidence, edited=True, original=original)
+        return FieldValue(text=text, evidence=old.evidence, inherited_from=old.inherited_from)
+    return FieldValue(
+        text=text,
+        evidence=old.evidence,
+        edited=True,
+        original=original,
+        inherited_from=old.inherited_from,
+    )
 
 
 def _clean_text(field: str, value: str) -> str:

@@ -6,6 +6,9 @@
 {% macro value(field_value) -%}
   <div class="field-value">
     <div class="text">{{ field_value.text }}</div>
+    {% if field_value.inherited_from %}
+      <span class="badge">{% if field_value.edited %}Original inherited{% else %}Inherited{% endif %} programme contact: {{ field_value.inherited_from }}</span>
+    {% endif %}
     {% if field_value.edited %}
       <span class="badge badge-edited">{{ "Edited by reviewer" if field_value.original else "Added by reviewer" }}</span>
       {% if field_value.original %}<span class="meta">Original: {{ field_value.original }}</span>{% endif %}

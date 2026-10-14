@@ -13,7 +13,7 @@ from .context import ProjectContext
 from .scope import scope_values
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-14.2"
+PROMPT_VERSION = "2026-10-14.3"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -67,6 +67,15 @@ form controls that will not exist in HIA (for example, entering a postcode into 
 source website's lookup widget). Preserve actual service eligibility, application \
 procedures and public contacts. When an online action is needed, use a supported external \
 service link rather than pretending the source website's controls are available in HIA.
+13. A service can use its programme's central contact even when the contact is in another \
+source or sub-category. Use ALL approved sources to identify genuinely shared contacts. \
+Do not report a contact as missing just because linked passages omit it. Leave otherwise \
+empty offer contact fields for the independent check to supply explicitly applicable \
+programme defaults, marked as inherited. When only a shared central contact is available, \
+leave that offer field empty during drafting so the check can record its inheritance. \
+Never assume an organisation's generic contact \
+serves every programme, or that a central address/hours is a service's location/hours. \
+Preserve specific contacts; do not borrow contacts from another programme or location.
 
 Example of HIA structure and style (version {EXAMPLES_VERSION}). It is fictional: use it only \
 for structure and tone, never as a source of facts.
@@ -192,6 +201,27 @@ prose correction is possible, omit the rewrite; code withholds the affected fiel
 If a question's wording itself contains a superseded contact, target its answer value_id; \
 code withholds the Q&A for staff to correct the question too.
 Return empty lists when no contact conflicts or rewrites are needed.
+
+Shared contacts (part of this same check):
+- Inspect all approved sources for programme-level contacts that explicitly support \
+services offered here. shared_contacts supplies defaults ONLY for originally empty offer \
+fields: phone_numbers, emails, web_urls, address, open_weekdays, open_weekend. The offer \
+list below includes zero-based offer_index and empty fields for this purpose.
+- Each entry gives offer_index, field, programme (short label), reason (English explanation \
+of why this central contact applies to this particular offer), applicability_chunk_ids \
+(evidence both of shared scope and the offer's programme membership), and values \
+(each text with its own chunk_ids). Use one value for address or hours; lists may have \
+multiple contacts. Applicability and factual value must both be source-supported.
+- Never default based on common organisation name, URL, adjacency, or silence alone. \
+Do not transfer another programme's contacts. Do not override service-specific details, \
+or rescue fields rejected in verdicts. Do not call central office hours/address the \
+service's hours/address unless sources explicitly establish this applicability.
+- Assess defaults independently for programme scope and privacy before proposing them. \
+Audit these defaults for contact conflicts too: their value IDs are o<offer_index>.<field>.<entry> \
+for lists and o<offer_index>.<field> for text. Include affected inherited IDs in \
+contact_conflicts and apply rule 11. No extra scope verdicts are needed for these IDs.
+- Return shared_contacts [] when no safely applicable shared contact exists. Do not invent \
+missing hours or addresses. Leave genuinely missing details as gaps.
 """
 
 _SOURCE_TAG = re.compile(r"<(/?)(sources?)\b", re.IGNORECASE)
@@ -405,7 +435,14 @@ def scope_messages(
         for value in scope_values(draft)
     ]
     data = json.dumps(
-        {"values": candidates, "drafting_issues": [issue.model_dump() for issue in draft.issues]},
+        {
+            "values": candidates,
+            "offers": [
+                {"offer_index": number, **offer.model_dump()}
+                for number, offer in enumerate(draft.offers)
+            ],
+            "drafting_issues": [issue.model_dump() for issue in draft.issues],
+        },
         ensure_ascii=False,
     )
     task = SCOPE_TASK.format(category=_label(category), subcategory=_label(subcategory))

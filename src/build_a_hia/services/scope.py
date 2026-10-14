@@ -32,12 +32,26 @@ class ContactRewrite(BaseModel):
     replacement: CitedText
 
 
+class SharedContact(BaseModel):
+    """An explicitly applicable programme contact for an originally empty offer field."""
+
+    offer_index: int
+    field: Literal[
+        "phone_numbers", "emails", "web_urls", "address", "open_weekdays", "open_weekend"
+    ]
+    programme: str
+    reason: str
+    applicability_chunk_ids: list[str]
+    values: list[CitedText]
+
+
 class ScopeReview(BaseModel):
     """Structured output of the independent scope and contact-conflict check."""
 
     verdicts: list[ScopeVerdict]
     contact_conflicts: list[ContactConflict]
     contact_rewrites: list[ContactRewrite]
+    shared_contacts: list[SharedContact]
 
 
 class ScopeReviewError(Exception):

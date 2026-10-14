@@ -201,6 +201,7 @@ def test_scope_rejection_is_applied_before_storing_content(services, make_proces
     review = {
         "contact_conflicts": [],
         "contact_rewrites": [],
+        "shared_contacts": [],
         "verdicts": [
             {
                 "value_id": value_id,
@@ -228,7 +229,12 @@ def test_scope_rejection_is_applied_before_storing_content(services, make_proces
     "review, expected_error",
     [
         (
-            {"verdicts": [], "contact_conflicts": [], "contact_rewrites": []},
+            {
+                "verdicts": [],
+                "contact_conflicts": [],
+                "contact_rewrites": [],
+                "shared_contacts": [],
+            },
             "programme-scope check was incomplete",
         ),
         (ModelError("timeout", "The AI model took too long."), "took too long"),
@@ -364,6 +370,63 @@ def test_contact_check_corrects_old_values_using_all_sources_in_the_same_two_cal
     assert content.offers[0].phone_numbers[0].text == "213 913 925"
     assert content.questions[0].answer.text == "Call 213 913 925."
     assert all(issue.kind == "conflict" for issue in content.issues)
+    assert len(model.calls) == 2
+
+
+@pytest.mark.parametrize("current_date", ["2025-10-23", "2013-09-27"])
+def test_inherited_contacts_still_use_contact_precedence_and_preserve_applicability_evidence(
+    services, make_processor, key, current_date
+):
+    for text, document_date in [
+        ("RLF central team handles Family messages. Phone: 213913935.", "2013-09-27"),
+        ("RLF central team phone: 213 913 925.", current_date),
+    ]:
+        source = add_converted_source(services, key, [text], "RLF")
+
+        def metadata(source, document_date=document_date):
+            source.document_date = document_date
+            source.document_date_origin = "user"
+            source.format = "pdf"
+            return True
+
+        services.sources.repository.mutate(key, source.id, metadata)
+    services.sessions.approve_sources(key)
+    structure = _approved_structure(services, make_processor, key)
+    sub = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [sub.key])
+    draft = {"offers": [offer(cited("Family messages", "S2-p1-c1"))], "questions": [], "issues": []}
+    review = scope_response(draft)
+    review["shared_contacts"] = [
+        {
+            "offer_index": 0,
+            "field": "phone_numbers",
+            "programme": "RLF",
+            "reason": "RLF's central team explicitly handles family messages.",
+            "applicability_chunk_ids": ["S2-p1-c1"],
+            "values": [cited("213913935", "S2-p1-c1")],
+        }
+    ]
+    review["contact_conflicts"] = [
+        {
+            "item": "RLF central team",
+            "field": "phone_numbers",
+            "value_ids": ["o0.phone_numbers.0"],
+            "candidates": [cited("213913935", "S2-p1-c1"), cited("213 913 925", "S3-p1-c1")],
+        }
+    ]
+    model = FakeModel(draft, review)
+    make_processor(model).process_next()
+    state = services.contents.state(key, sub.key)
+    assert state.status == "done"
+    content = services.contents.result(key, state)
+    if current_date == "2025-10-23":
+        phone = content.offers[0].phone_numbers[0]
+        assert phone.text == "213 913 925"
+        assert phone.inherited_from == "RLF"
+        assert {e.chunk_id for e in phone.evidence} == {"S2-p1-c1", "S3-p1-c1"}
+    else:
+        assert content.offers[0].phone_numbers == []
+    assert any(issue.kind == "conflict" for issue in content.issues)
     assert len(model.calls) == 2
 
 

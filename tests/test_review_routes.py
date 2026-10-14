@@ -483,6 +483,113 @@ def test_contact_precedence_is_consistent_in_approved_subcategories_and_exports(
     assert "S2-p1-c1" in internal and "S3-p1-c1" in internal
 
 
+def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited_markers(
+    ready_client, services, run_jobs
+):
+    client = ready_client
+    key = session_key_of(client)
+    add_converted_source(
+        services,
+        key,
+        ["RLF offers Family messages and Trace the Face. Both services use the central RLF team."],
+        "RLF services",
+    )
+    add_converted_source(
+        services,
+        key,
+        [
+            "RLF central team handles all RLF services, including family messages "
+            "and Trace the Face. "
+            "Call 213 913 925 or pesquisa@example.org. The central team is at Central Street 1."
+        ],
+        "Shared RLF contact",
+    )
+    services.sessions.approve_sources(key)
+    client.post("/structure/propose", data={"instructions": ""})
+    run_jobs(PROPOSAL)
+    client.post("/structure/approve", data={"version": 1})
+    client.post("/content/generate")
+    scripts = []
+    for name in ("Family messages", "Trace the Face"):
+        draft = {
+            "offers": [offer(cited(name, "S2-p1-c1"))],
+            "questions": [],
+            "issues": [
+                {
+                    "kind": "missing",
+                    "item": name,
+                    "field": field,
+                    "description": "The linked passages omit this contact.",
+                    "chunk_ids": [],
+                }
+                for field in ("phone_numbers", "emails", "address", "open_weekdays")
+            ],
+        }
+        review = scope_response(draft)
+        review["shared_contacts"] = [
+            {
+                "offer_index": 0,
+                "field": field,
+                "programme": "RLF",
+                "reason": "The central RLF team explicitly handles this service.",
+                "applicability_chunk_ids": ["S2-p1-c1", "S3-p1-c1"],
+                "values": [cited(text, "S3-p1-c1")],
+            }
+            for field, text in [
+                ("phone_numbers", "213 913 925"),
+                ("emails", "pesquisa@example.org"),
+                ("address", "Central Street 1"),
+            ]
+        ]
+        scripts.extend([draft, review])
+    run_jobs(*scripts)
+    structure = services.structures.approved(key)[1]
+    for _category, sub in structure.subcategories():
+        state = _state(services, key, sub.key)
+        assert state.status == "done"
+        content = services.contents.result(key, state)
+        item = content.offers[0]
+        assert item.emails[0].inherited_from == "RLF"
+        assert item.phone_numbers[0].inherited_from == "RLF"
+        assert {e.chunk_id for e in item.phone_numbers[0].evidence} == {
+            "S2-p1-c1",
+            "S3-p1-c1",
+        }
+        assert item.address.inherited_from == "RLF"
+        assert item.open_weekdays.text == ""
+        assert [issue.field for issue in content.issues] == ["open_weekdays"]
+        page = client.get(f"/content/{sub.key}").data
+        assert b"Inherited programme contact: RLF" in page
+        client.post(
+            f"/content/{sub.key}/approve",
+            data={"blob": state.blob, "disclosure_reviewed": "y"},
+        )
+        assert _state(services, key, sub.key).approved
+    client.post("/download")
+    latest = services.exports.latest(key)
+
+    def values(filename):
+        response = client.get(f"/download/{latest['snapshot']}/{filename}")
+        assert response.status_code == 200
+        workbook = load_workbook(io.BytesIO(response.data))
+        return "\n".join(
+            str(cell.value)
+            for sheet in workbook.worksheets
+            for row in sheet
+            for cell in row
+            if cell.value is not None
+        )
+
+    public = values("hia.xlsx")
+    assert public.count("pesquisa@example.org") == 2
+    assert public.count("213 913 925") == 2
+    assert "Inherited programme contact" not in public
+    internal = values("review-internal.xlsx")
+    assert "Inherited programme contact: RLF" in internal
+    assert "S2-p1-c1" in internal
+    assert "S3-p1-c1" in internal
+
+
 def test_downloads_are_isolated_and_replaced(generated, services, app):
     client, key, night, cash = generated
     _approve_all(client, services, key, night, cash)
