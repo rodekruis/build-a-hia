@@ -9,7 +9,7 @@ Filling that sheet by hand from guidelines, documents and web pages can take day
 1. **Context**: describe the crisis, target group, locations and the output language.
 2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
 3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve.
-4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap.
+4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap. A separate AI check assesses each populated field against the intended programme and audience: facts supported only for another programme, or with unclear applicability, are withheld and kept as cited gaps for staff follow-up. This check uses an additional request (and AI allowance) for each nonempty draft; failed or incomplete checks do not save new content.
 5. **Review**: staff check each sub-category against the cited evidence, edit its fields inline and approve it. Edits save automatically. Gaps (missing, conflicting or outdated information, failed sources) show an editable suggested action, including any relevant contact.
 6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
 
@@ -25,7 +25,7 @@ flowchart LR
     cleanup[hia-cleanup job<br>hourly] --> storage
 ```
 
-The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
+The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry, followed by an independent programme-scope check for nonempty content drafts. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
 
 ## Requirements
 
@@ -65,6 +65,22 @@ uv run --env-file .env python -m build_a_hia.worker generate --loop
 The generate worker needs `FOUNDRY_ENDPOINT` and `FOUNDRY_DEPLOYMENT` (a deployment that supports structured outputs). Locally it uses `FOUNDRY_API_KEY`, or your `az login` account when the key is empty.
 
 The app is available at http://127.0.0.1:5000. The health endpoint is `/health`. With `HIA_STORAGE_BACKEND=local`, sessions, files and queue messages are stored in `.hia-storage/` (git-ignored). The first conversion downloads Docling models; run `uv run python -m build_a_hia.worker prefetch-models` to download them up front.
+
+### Scanned documents and OCR
+
+Choose **Language of scanned text** when uploading files or adding a document link. This is the source's recognition language, not the HIA output language; OCR does not translate. The default is English. Arabic, Chinese, French, German, Spanish, Portuguese, Dutch, Turkish, Russian and Ukrainian are also supported. Each source uses one RapidOCR recognizer; Latin languages share a model, as do Russian and Ukrainian. Upload different scanned languages separately. Mixed-language documents should use their main scanned language and need careful review.
+
+PDF pages with no readable text or fewer than 30 estimated readable-text tokens are retried with full-page OCR. Image placeholders and Markdown formatting do not count as readable text. Images use OCR immediately. If OCR produces less text than native extraction, the native text is retained. The threshold is a warning heuristic, not a guarantee of completeness or recognition accuracy; token estimates use UTF-8 bytes and vary across scripts.
+
+Sources with sparse text, unreadable pages, incomplete OCR or partial conversion show **Converted with warnings**. Review their converted-text preview before approving them. Their limitations become **Conversion problem** gaps in review and in `review-internal.xlsx`. Sources without any readable text fail and provide no citable passages. Sources with warnings remain usable; failed sources follow the existing explicit approval rules.
+
+For failed or cancelled sources, save a different scanned-text language on the source details page before retrying. Cancel an active conversion before changing its language. Successful conversion deletes the original bytes, so converted sources, including older placeholder-only results, must be removed and added again to reconvert.
+
+### Web-page FAQs
+
+Static HTML conversion includes collapsed FAQ answers already present in the page: inline `display:none`, `visibility:hidden`/`collapse`, zero opacity, `hidden` and `aria-hidden` markers are removed from conversion input. Nested description-list accordion wrappers are flattened so questions and answers remain together. Scripts, templates, navigation and stylesheets are excluded; no JavaScript is executed, pages are not rendered, and external or local assets are not fetched. Content loaded only by JavaScript still requires uploading a complete document or saved PDF.
+
+A page with at least three headings, fewer than 30 estimated body-text tokens, and less than one quarter as much body text as heading text shows **Converted with warnings**. This conservative heuristic flags heading-only FAQs without rejecting usable text; it is not a completeness guarantee. Check the converted preview against the original page. The warning is also included as a conversion gap in review and the internal workbook. Re-add previously converted FAQ sources to recover their answers.
 
 ## Background jobs
 
@@ -108,6 +124,8 @@ uv run ty check
 ```
 
 Tests that run real Docling conversions are excluded by default. Run them with `uv run python -m pytest -m docling`.
+
+The integration suite includes synthetic image-only English and Arabic PDFs and a blank-page regression. The Arabic fixture uses an installed Arial or DejaVu Sans font and is skipped if neither is available; no third-party PDF downloads are needed. Production verification should also run conversions with prefetched models and no network access.
 
 Ruff also enforces Google-style docstrings (`D`) and Bandit security rules (`S`) for application code.
 

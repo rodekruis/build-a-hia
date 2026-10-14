@@ -43,6 +43,13 @@
         {{ csrf(form) }}
         {{ field(form.title) }}
         {{ field(form.document_date, "Leave empty if unknown. A missing date is treated as unknown, not current.") }}
+        {% if source.can_retry %}
+          {{ field(form.ocr_language, "Save the language before retrying. Choose the main language of scanned text.") }}
+        {% else %}
+          <input type="hidden" name="{{ form.ocr_language.name }}" value="{{ source.ocr_language }}">
+          <p class="hint">Scanned-text language: {{ ocr_language_label }}. Cancel processing to change it; for converted sources, remove and add the source again.</p>
+          {% for error in form.ocr_language.errors %}<p class="error">{{ error }}</p>{% endfor %}
+        {% endif %}
         <div class="actions">
           <button type="submit" class="button">Save details</button>
         </div>

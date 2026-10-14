@@ -20,7 +20,8 @@ from wtforms.validators import (
     ValidationError,
 )
 
-from ..services.languages import MAX_LANGUAGE_INPUT, resolve_language
+from ..services.conversion import OCR_LANGUAGES
+from ..services.languages import MAX_LANGUAGE_INPUT, language_label, resolve_language
 from ..services.structure import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH
 
 DIRECTION_CHOICES = [
@@ -59,23 +60,35 @@ class ContextForm(FlaskForm):
             )
 
 
+def _ocr_language(field_id: str) -> SelectField:
+    return SelectField(
+        "Language of scanned text",
+        choices=[(code, language_label(code)) for code in OCR_LANGUAGES],
+        default="en",
+        id=field_id,
+    )
+
+
 class UploadForm(FlaskForm):
     """Submits one or more source files; size and type are checked by the sources service."""
 
     files = MultipleFileField("Files")
+    ocr_language = _ocr_language("upload-ocr-language")
 
 
 class UrlForm(FlaskForm):
     """Submits a web address to fetch as a source; title and date come from the page."""
 
     url = URLField("Web page or document address", validators=[DataRequired(), Length(max=2048)])
+    ocr_language = _ocr_language("url-ocr-language")
 
 
 class SourceDetailsForm(FlaskForm):
-    """Submits the editable title and document date of a source."""
+    """Submits source metadata and its scanned-text recognition language."""
 
     title = StringField("Title", validators=[DataRequired(), Length(max=200)])
     document_date = DateField("Document date", validators=[Optional()])
+    ocr_language = _ocr_language("source-ocr-language")
 
 
 class ApproveForm(FlaskForm):

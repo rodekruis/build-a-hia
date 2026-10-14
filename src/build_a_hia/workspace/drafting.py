@@ -389,7 +389,12 @@ def content_detail(key: str):
     overrides = hia.gaps.overrides(workspace.key)
     gaps = [
         gap
-        for gap in collect_gaps([category], [], overrides)
+        for gap in collect_gaps(
+            [category],
+            hia.sources.repository.list_for(workspace.key),
+            overrides,
+            reference_date=workspace.context.reference_date if workspace.context else "",
+        )
         if gap.subcategory_key == subcategory.key
     ]
     blob = content_state.blob if content_state else ""

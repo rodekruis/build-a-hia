@@ -3,10 +3,12 @@ import json
 import pytest
 from factories import make_text_pdf, session_key_of, upload
 
-from build_a_hia.services.chunking import ConvertedUnit
-from build_a_hia.services.conversion import ConversionOutput
+from build_a_hia.services.chunking import ConvertedUnit, estimate_tokens
+from build_a_hia.services.conversion import ConversionOutput, DoclingConverter
+from build_a_hia.services.generation import load_source_material
 from build_a_hia.services.inspection import SourceError
 from build_a_hia.services.jobs import ConversionProcessor
+from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import (
     SourceStatus,
     chunks_blob,
@@ -24,10 +26,12 @@ class FakeConverter:
         self.on_progress = on_progress
         self.calls = 0
         self.base_urls: list[str] = []
+        self.ocr_languages: list[str] = []
 
-    def convert(self, path, source_format, progress, *, base_url=""):
+    def convert(self, path, source_format, progress, *, base_url="", ocr_language="en"):
         self.calls += 1
         self.base_urls.append(base_url)
+        self.ocr_languages.append(ocr_language)
         assert path.exists()
         progress(0, 2)
         if self.on_progress:
@@ -93,6 +97,25 @@ def test_converted_source_is_chunked_and_original_removed(services, make_process
 
 def test_empty_queue_returns_false(make_processor):
     assert make_processor().process_next() is False
+
+
+def test_selected_ocr_language_reaches_converter(services, make_processor, uploaded):
+    key, source = uploaded
+    services.sources.cancel(key, source.id)
+    services.sources.update_metadata(
+        key,
+        source.id,
+        title=source.title,
+        document_date="",
+        ocr_language="ar",
+    )
+    services.sources.retry(key, source.id)
+    converter = FakeConverter()
+    processor = make_processor(converter=converter)
+    while processor.process_next():
+        pass
+    assert converter.ocr_languages == ["ar"]
+    assert services.sources.get(key, source.id).ocr_language == "ar"
 
 
 def test_conversion_invalidates_source_approval(services, make_processor, uploaded):
@@ -231,6 +254,108 @@ def test_url_source_is_fetched_and_described(workspace_client, services, make_pr
     assert source.document_date == "2026-09-01"
     assert source.document_date_origin == "page metadata"
     assert source.retrieved_at
+
+
+@pytest.mark.parametrize("with_answers", [False, True])
+def test_html_faq_answers_or_warning_reach_chunks_sources_and_review(
+    workspace_client, services, make_processor, with_answers
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/faq"})
+    key = session_key_of(workspace_client)
+    entries = "".join(
+        f"<h2>How can families apply for service {index}?</h2>"
+        + (
+            '<div style="display:none"><p>Visit the office with your identity card.</p></div>'
+            if with_answers
+            else ""
+        )
+        for index in range(4)
+    )
+    page = (
+        "<html><head><title>Registration FAQ</title>"
+        '<meta name="date" content="2026-10-09"></head><body>' + entries + "</body></html>"
+    ).encode()
+    fetcher = FakeFetcher(
+        FetchResult(
+            final_url="https://example.org/faq",
+            content_type="text/html",
+            data=page,
+            last_modified="",
+        )
+    )
+    make_processor(converter=DoclingConverter(), fetcher=fetcher).process_next()
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert source.title == "Registration FAQ"
+    assert source.document_date == "2026-10-09"
+    chunks = json.loads(services.blobs.get(chunks_blob(key, source.id)))
+    assert chunks and all(chunk["id"].startswith("S1-") for chunk in chunks)
+    gaps = collect_gaps([], [source], {})
+    status = workspace_client.get("/sources/status").data
+    if with_answers:
+        assert any("Visit the office with your identity card." in chunk["text"] for chunk in chunks)
+        assert source.limitations == []
+        assert gaps == []
+        assert b"Converted with warnings" not in status
+    else:
+        assert "headings but very little body text" in source.limitations[0]
+        assert b"Converted with warnings" in status
+        assert source.limitations[0].encode() in status
+        assert len(gaps) == 1 and gaps[0].kind == "conversion"
+        assert gaps[0].source_reference == source.reference
+
+
+def test_html_boilerplate_does_not_reach_stored_chunks_token_budget_or_model_sources(
+    workspace_client, services, make_processor
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/support"})
+    key = session_key_of(workspace_client)
+    menu = "<p>Unrelated repeated navigation menu text.</p>" * 1000
+    page = (
+        "<html><head><title>Financial support</title>"
+        '<meta name="date" content="2026-10-14"></head><body>'
+        f"<header>{menu}</header><main><article>"
+        "<header><p>Help for families</p><h1>Financial support</h1></header>"
+        "<p>Apply at the town hall with proof of income.</p>"
+        '<div hidden><p>Read <a href="/documents">the document checklist</a>.</p></div>'
+        '<div class="c-contact-flyout"><p>Enter your postcode into this widget.</p></div>'
+        '<form><label>Your postcode</label><input name="postcode"></form>'
+        "</article></main><footer><p>Newsletter subscription</p></footer></body></html>"
+    ).encode()
+    assert estimate_tokens(page.decode()) > 10000
+    fetcher = FakeFetcher(
+        FetchResult(
+            final_url="https://example.org/support",
+            content_type="text/html",
+            data=page,
+            last_modified="",
+        )
+    )
+
+    make_processor(converter=DoclingConverter(), fetcher=fetcher).process_next()
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert source.title == "Financial support" and source.document_date == "2026-10-14"
+    assert 0 < source.token_count < 100
+    assert source.limitations == []
+    markdown = services.blobs.get(markdown_blob(key, source.id)).decode()
+    chunks = json.loads(services.blobs.get(chunks_blob(key, source.id)))
+    materials, index = load_source_material(services.sources.repository, services.blobs, key)
+    texts = [
+        markdown,
+        *(chunk["text"] for chunk in chunks),
+        *(chunk.text for material in materials for chunk in material.chunks),
+    ]
+    assert index and materials
+    for text in texts:
+        assert "Apply at the town hall with proof of income." in text
+        assert "Help for families" in text
+        assert "https://example.org/documents" in text
+        assert "postcode" not in text
+        assert "navigation menu" not in text
+        assert "Newsletter" not in text
 
 
 def test_fetched_pdf_uses_server_date(workspace_client, services, make_processor):

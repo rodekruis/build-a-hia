@@ -439,6 +439,9 @@ def _evidence_rows(
         human = f"Edited by reviewer. Original: {value.original}" if value.edited else ""
         if value.edited and not value.original:
             human = "Added by reviewer."
+        if value.inherited_from:
+            label = "Original inherited" if value.edited else "Inherited"
+            human = (f"{label} programme contact: {value.inherited_from}. {human}").strip()
         if not value.evidence:
             rows.append(
                 (sub_id, sub_name, item_type, item, field, value.text, "", "", "", status, human)

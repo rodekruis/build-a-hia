@@ -47,10 +47,12 @@ class Converter(Protocol):
         progress: ProgressCallback,
         *,
         base_url: str = "",
+        ocr_language: str = "en",
     ) -> ConversionOutput:
         """Convert the file at `path`, reporting progress; raises `SourceError` on failure.
 
         `base_url` is the address of a fetched web page, used only to resolve its links.
+        `ocr_language` selects the recognizer for scanned pages and images.
         """
         ...
 
@@ -188,7 +190,11 @@ class ConversionProcessor:
             self._update(session_key, source.id, version, pages_done=done)
 
         output = self._converter.convert(
-            path, source_format, progress, base_url=source.final_url or source.url
+            path,
+            source_format,
+            progress,
+            base_url=source.final_url or source.url,
+            ocr_language=source.ocr_language,
         )
         chunks = build_chunks(source.number, output.units)
         if not chunks:

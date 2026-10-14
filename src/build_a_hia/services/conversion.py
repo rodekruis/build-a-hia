@@ -2,19 +2,23 @@
 
 Follows the approach used in rodekruis/appeals-monitor: Docling is imported lazily, PDF
 pages are counted with pypdfium2, PDFs are converted in small page ranges with page-based
-timeouts, and full-page OCR runs only for pages the standard pipeline could not read.
+timeouts, and full-page OCR retries pages with missing or sparse readable text.
 """
 
 import io
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from .chunking import ConvertedUnit
+if TYPE_CHECKING:
+    from bs4 import BeautifulSoup, Tag
+
+from .chunking import ConvertedUnit, estimate_tokens
 from .inspection import IMAGE_FORMATS, SourceError, SourceFormat
 
 logger = logging.getLogger(__name__)
@@ -24,6 +28,168 @@ MIN_TIMEOUT = 60.0
 MAX_TIMEOUT = 600.0
 # Small page ranges avoid native out-of-memory errors (std::bad_alloc) on large PDFs.
 PDF_CHUNK_PAGES = 5
+MIN_READABLE_TOKENS = 30
+# Several languages share a recognizer; use engine codes, not ambiguous language aliases.
+OCR_LANGUAGES = {
+    "en": "iso:en",
+    "ar": "arabic",
+    "zh": "ch",
+    "fr": "latin",
+    "de": "latin",
+    "es": "latin",
+    "pt": "latin",
+    "nl": "latin",
+    "tr": "latin",
+    "ru": "cyrillic",
+    "uk": "cyrillic",
+}
+_NON_TEXT = re.compile(r"<!--.*?-->|!\[[^\]]*\]\([^)]*\)", re.DOTALL)
+_MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_HEADING = re.compile(r"^ {0,3}#{1,6}\s+", re.MULTILINE)
+_HIDDEN_STYLE = re.compile(
+    r"^\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|opacity\s*:\s*0)"
+    r"\s*(?:!important\s*)?$",
+    re.IGNORECASE,
+)
+_HTML_UI_MARKER = re.compile(
+    r"(?:^|[-_\s])(?:flyout|modal|popup|pop-up|breadcrumbs?|newsletter|"
+    r"cookie-(?:banner|consent|notice)|site-(?:menu|navigation))(?=$|[-_\s])",
+    re.IGNORECASE,
+)
+
+
+def _html_roles(tag: "Tag") -> set[str]:
+    role = tag.get("role")
+    return set(role.lower().split()) if isinstance(role, str) else set()
+
+
+def _html_is_main(tag: "Tag") -> bool:
+    return tag.name == "main" or "main" in _html_roles(tag)
+
+
+def _html_is_widget(tag: "Tag") -> bool:
+    ui_roles = {"navigation", "banner", "contentinfo", "dialog", "alertdialog", "search"}
+    if _html_roles(tag) & ui_roles:
+        return True
+    if str(tag.get("aria-modal", "")).strip().lower() == "true":
+        return True
+    classes = tag.get("class")
+    class_names = classes if isinstance(classes, list) else [str(classes or "")]
+    identity = " ".join([str(tag.get("id", "")), *class_names])
+    return bool(_HTML_UI_MARKER.search(identity))
+
+
+def _html_main_content(soup: "BeautifulSoup") -> None:
+    """Keep all nonempty main landmarks, or articles when no main exists.
+
+    Retain the body when no usable landmark exists (common for static FAQ fragments).
+    Article headers/footers and static service sidebars inside main are content, not
+    site chrome; do not discard them just because of their tag names.
+    """
+    candidates = [
+        tag for tag in soup.find_all(True) if _html_is_main(tag) and tag.get_text(strip=True)
+    ]
+    if not candidates:
+        candidates = [tag for tag in soup.find_all("article") if tag.get_text(strip=True)]
+    if not candidates:
+        return
+    selected = [
+        tag for tag in candidates if not any(parent in candidates for parent in tag.parents)
+    ]
+    body = soup.body
+    if body is None:
+        body = soup.new_tag("body")
+        (soup.html or soup).append(body)
+    content = [tag.extract() for tag in selected]
+    body.clear()
+    for tag in content:
+        body.append(tag)
+
+
+def _normalize_html(data: bytes) -> bytes:
+    """Retain static main content/FAQs while excluding site chrome and interactive UI."""
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(data, "html.parser")
+    # Work inside out so removing a parent never leaves decomposed child tags to inspect.
+    for tag in reversed(soup.find_all(True)):
+        site_chrome = tag.name in {"header", "footer"} and not any(
+            parent.name == "article" or _html_is_main(parent) for parent in tag.parents
+        )
+        if (
+            tag.name in {"script", "noscript", "style", "template", "nav"}
+            or (tag.name == "form" and tag.find(["input", "select", "textarea"]) is not None)
+            or _html_is_widget(tag)
+            or site_chrome
+        ):
+            tag.decompose()
+        elif tag.name in {"header", "footer"}:
+            # Docling otherwise skips some text in headers/footers, even within articles.
+            tag.name = "div"
+    _html_main_content(soup)
+    for tag in soup.find_all(True):
+        tag.attrs.pop("hidden", None)
+        tag.attrs.pop("aria-hidden", None)
+        style = tag.get("style")
+        if isinstance(style, str):
+            tag["style"] = ";".join(
+                declaration
+                for declaration in style.split(";")
+                if not _HIDDEN_STYLE.fullmatch(declaration)
+            )
+    # Docling accepts one wrapper around dt/dd, but not nested accordion wrappers.
+    for description_list in soup.find_all("dl"):
+        for wrapper in reversed(description_list.find_all("div")):
+            if (
+                wrapper.find_parent(["dl", "dt", "dd"]) is description_list
+                and wrapper.find(["dt", "dd"]) is not None
+            ):
+                wrapper.unwrap()
+        # Docling's nested-list path otherwise drops prose next to the inner list.
+        if description_list.find("dl") is not None:
+            entries = [
+                tag
+                for tag in description_list.find_all(["dt", "dd"])
+                if tag.find_parent("dl") is description_list
+            ]
+            for entry in entries:
+                entry.name = "h3" if entry.name == "dt" else "div"
+            description_list.name = "div"
+    return soup.encode("utf-8")
+
+
+def _html_has_sparse_body(markdown: str) -> bool:
+    lines = _NON_TEXT.sub("", markdown).splitlines()
+    headings = [line for line in lines if _HEADING.match(line)]
+    if len(headings) < 3:
+        return False
+    heading_tokens = _text_tokens("\n".join(headings))
+    body_tokens = _text_tokens("\n".join(line for line in lines if not _HEADING.match(line)))
+    return body_tokens < 30 and body_tokens * 4 < heading_tokens
+
+
+def readable_text(markdown: str) -> str:
+    """Return visible text for extraction checks, ignoring comments, images and markup."""
+    text = _MARKDOWN_LINK.sub(r"\1", _NON_TEXT.sub("", markdown))
+    return " ".join(re.sub(r"[#*`_~|>\-]+", " ", text).split())
+
+
+def _text_tokens(markdown: str) -> int:
+    text = readable_text(markdown)
+    return estimate_tokens(text) if any(character.isalnum() for character in text) else 0
+
+
+def validate_ocr_language(language: str) -> None:
+    """Reject unsupported OCR languages before storing or converting a source."""
+    if language not in OCR_LANGUAGES:
+        raise SourceError("invalid_ocr_language", "Choose a supported language for scanned text.")
+
+
+@dataclass
+class _PageConversion:
+    texts: dict[int, str]
+    partial: bool = False
+
 
 ProgressCallback = Callable[[int, int], None]
 
@@ -88,7 +254,7 @@ def count_pdf_pages(path: Path) -> int:
 def _docling() -> SimpleNamespace:
     from docling.datamodel.backend_options import HTMLBackendOptions
     from docling.datamodel.base_models import ConversionStatus, DocumentStream, InputFormat
-    from docling.datamodel.pipeline_options import OcrAutoOptions, OcrMode, PdfPipelineOptions
+    from docling.datamodel.pipeline_options import OcrMode, PdfPipelineOptions, RapidOcrOptions
     from docling.document_converter import (
         DocumentConverter,
         HTMLFormatOption,
@@ -104,7 +270,7 @@ def _docling() -> SimpleNamespace:
         HTMLFormatOption=HTMLFormatOption,
         ImageFormatOption=ImageFormatOption,
         InputFormat=InputFormat,
-        OcrAutoOptions=OcrAutoOptions,
+        RapidOcrOptions=RapidOcrOptions,
         OcrMode=OcrMode,
         PdfFormatOption=PdfFormatOption,
         PdfPipelineOptions=PdfPipelineOptions,
@@ -116,7 +282,7 @@ class DoclingConverter:
 
     def __init__(self) -> None:
         # Converters cache their loaded models, so reuse them across chunks.
-        self._converters: dict[tuple[bool, float, bool], Any] = {}
+        self._converters: dict[tuple[bool, float, bool, str], Any] = {}
 
     def convert(
         self,
@@ -125,11 +291,12 @@ class DoclingConverter:
         progress: ProgressCallback,
         *,
         base_url: str = "",
+        ocr_language: str = "en",
     ) -> ConversionOutput:
         """Convert a file into units of markdown.
 
-        PDFs are converted in small page ranges, and pages without text are retried with
-        full-page OCR. Other formats are converted as a whole; images always use OCR.
+        PDFs are converted in small page ranges, and pages with missing or sparse readable
+        text are retried with full-page OCR. Other formats convert as a whole; images use OCR.
 
         Args:
             path: File to convert.
@@ -137,37 +304,50 @@ class DoclingConverter:
             progress: Called with pages done and total pages; may raise to stop the conversion.
             base_url: Address of a fetched web page, used to make its relative links absolute.
                 Nothing is fetched from it.
+            ocr_language: Language of scanned text, selected separately for each source.
 
         Returns:
             The units with readable text and any limitations.
 
         Raises:
             SourceError: ``no_text`` if no readable text was found, or ``conversion_failed``
-                if a non-PDF file could not be converted.
+                if a non-PDF file could not be converted; ``invalid_ocr_language`` for an
+                unsupported recognition language.
         """
+        validate_ocr_language(ocr_language)
         if source_format == SourceFormat.PDF:
-            return self._convert_pdf(path, progress)
-        return self._convert_whole(path, source_format, progress, base_url)
+            return self._convert_pdf(path, progress, ocr_language)
+        return self._convert_whole(path, source_format, progress, base_url, ocr_language)
 
     def prefetch_models(self) -> None:
         """Download and load the PDF and image pipeline models before the first conversion."""
         docling = _docling()
-        for with_ocr in (False, True):
-            converter = self._converter(paginated=True, timeout=MIN_TIMEOUT, with_ocr=with_ocr)
-            converter.initialize_pipeline(docling.InputFormat.PDF)
-        self._converter(paginated=True, timeout=MAX_TIMEOUT, with_ocr=True).initialize_pipeline(
-            docling.InputFormat.IMAGE
+        self._converter(paginated=True, timeout=MIN_TIMEOUT, with_ocr=False).initialize_pipeline(
+            docling.InputFormat.PDF
         )
+        # Prefetch each distinct recognizer without retaining all loaded pipelines in memory.
+        for language in dict.fromkeys(OCR_LANGUAGES.values()):
+            code = next(code for code, model in OCR_LANGUAGES.items() if model == language)
+            converter = self._converter(
+                paginated=True, timeout=MIN_TIMEOUT, with_ocr=True, ocr_language=code
+            )
+            converter.initialize_pipeline(docling.InputFormat.PDF)
+            converter.initialize_pipeline(docling.InputFormat.IMAGE)
+            self._converters.clear()
 
-    def _converter(self, *, paginated: bool, timeout: float, with_ocr: bool) -> Any:
-        key = (paginated, timeout, with_ocr)
+    def _converter(
+        self, *, paginated: bool, timeout: float, with_ocr: bool, ocr_language: str = "en"
+    ) -> Any:
+        key = (paginated, timeout, with_ocr, OCR_LANGUAGES[ocr_language] if with_ocr else "")
         if key in self._converters:
             return self._converters[key]
         docling = _docling()
         if paginated:
             options = docling.PdfPipelineOptions(document_timeout=timeout, do_ocr=with_ocr)
             if with_ocr:
-                options.ocr_options = docling.OcrAutoOptions(mode=docling.OcrMode.FULL_PAGE)
+                options.ocr_options = docling.RapidOcrOptions(
+                    mode=docling.OcrMode.FULL_PAGE, lang=[OCR_LANGUAGES[ocr_language]]
+                )
             converter = docling.DocumentConverter(
                 allowed_formats=[docling.InputFormat.PDF, docling.InputFormat.IMAGE],
                 format_options={
@@ -190,6 +370,8 @@ class DoclingConverter:
             enable_local_fetch=False,
             fetch_images=False,
             render_page=False,
+            # Site chrome is already removed; text before the first heading is content.
+            infer_furniture=False,
             source_uri=base_url or None,
         )
         return docling.DocumentConverter(
@@ -199,54 +381,99 @@ class DoclingConverter:
             },
         )
 
-    def _convert_pdf(self, path: Path, progress: ProgressCallback) -> ConversionOutput:
+    def _convert_pdf(
+        self, path: Path, progress: ProgressCallback, ocr_language: str
+    ) -> ConversionOutput:
         total = count_pdf_pages(path)
         progress(0, total)
         texts: dict[int, str] = {}
         retry: list[tuple[int, int]] = []
+        partial: set[int] = set()
         done = 0
 
         for start, end in page_chunks(total):
-            converted = self._convert_range(path, (start, end), with_ocr=False)
+            converted = self._convert_range(
+                path, (start, end), with_ocr=False, ocr_language=ocr_language
+            )
             if converted is None:
                 retry.append((start, end))
             else:
-                texts.update({page: text for page, text in converted.items() if text.strip()})
-                empty = [page for page in range(start, end + 1) if page not in texts]
-                retry.extend(page_ranges(empty))
-                done += end - start + 1 - len(empty)
+                if converted.partial:
+                    partial.update(range(start, end + 1))
+                texts.update(
+                    {page: text for page, text in converted.texts.items() if _text_tokens(text)}
+                )
+                sparse = [
+                    page
+                    for page in range(start, end + 1)
+                    if _text_tokens(texts.get(page, "")) < MIN_READABLE_TOKENS
+                ]
+                retry.extend(page_ranges(sparse))
+                done += end - start + 1 - len(sparse)
             progress(done, total)
 
         missing: list[int] = []
+        ocr_failed: list[int] = []
         for start, end in retry:
-            converted = self._convert_range(path, (start, end), with_ocr=True) or {}
+            converted = self._convert_range(
+                path, (start, end), with_ocr=True, ocr_language=ocr_language
+            )
+            if converted is None:
+                ocr_failed.extend(range(start, end + 1))
+            elif converted.partial:
+                partial.update(range(start, end + 1))
             for page in range(start, end + 1):
-                text = converted.get(page, "")
-                if text.strip():
+                text = converted.texts.get(page, "") if converted is not None else ""
+                if _text_tokens(text) > _text_tokens(texts.get(page, "")):
                     texts[page] = text
-                else:
+                if page not in texts:
                     missing.append(page)
             done += end - start + 1
             progress(done, total)
 
         if not texts:
-            raise SourceError("no_text", "No readable text was found in this document.")
+            message = "No readable text was found in this document."
+            if ocr_failed:
+                message += " OCR could not complete. Try again or upload a text-based copy."
+            else:
+                message += " Check the selected language for scanned text or add a better copy."
+            raise SourceError("no_text", message)
         limitations = []
         if missing:
             limitations.append(
                 f"No text could be read from page(s) {describe_pages(missing)}. "
                 "They may be blank or contain only images."
             )
+        if partial:
+            limitations.append(
+                f"Conversion reported partial results for page(s) {describe_pages(list(partial))}. "
+                "Check the converted text; some information may be unavailable."
+            )
+        sparse = [page for page, text in texts.items() if _text_tokens(text) < MIN_READABLE_TOKENS]
+        if sparse:
+            limitations.append(
+                f"Very little text could be read from page(s) {describe_pages(sparse)} "
+                f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
+                "Check the converted text and selected language; "
+                "some information may be unavailable."
+            )
+        if ocr_failed:
+            limitations.append(
+                f"OCR could not complete for page(s) {describe_pages(ocr_failed)}. "
+                "Any readable native text was kept; scanned information may be unavailable."
+            )
         units = [ConvertedUnit(page=page, markdown=texts[page]) for page in sorted(texts)]
         return ConversionOutput(units=units, limitations=limitations)
 
     def _convert_range(
-        self, path: Path, page_range: tuple[int, int], *, with_ocr: bool
-    ) -> dict[int, str] | None:
+        self, path: Path, page_range: tuple[int, int], *, with_ocr: bool, ocr_language: str = "en"
+    ) -> _PageConversion | None:
         docling = _docling()
         timeout = calculate_timeout(page_range[1] - page_range[0] + 1)
-        converter = self._converter(paginated=True, timeout=timeout, with_ocr=with_ocr)
         try:
+            converter = self._converter(
+                paginated=True, timeout=timeout, with_ocr=with_ocr, ocr_language=ocr_language
+            )
             result = converter.convert(path, raises_on_error=False, page_range=page_range)
         except Exception as error:
             logger.warning(
@@ -267,10 +494,18 @@ class DoclingConverter:
                 result.status.value,
             )
             return None
-        return _export_pages(result.document, page_range)
+        return _PageConversion(
+            texts=_export_pages(result.document, page_range),
+            partial=result.status == docling.ConversionStatus.PARTIAL_SUCCESS,
+        )
 
     def _convert_whole(
-        self, path: Path, source_format: SourceFormat, progress: ProgressCallback, base_url: str
+        self,
+        path: Path,
+        source_format: SourceFormat,
+        progress: ProgressCallback,
+        base_url: str,
+        ocr_language: str,
     ) -> ConversionOutput:
         docling = _docling()
         progress(0, 1)
@@ -281,10 +516,17 @@ class DoclingConverter:
             converter = self._html_converter(base_url)
             # From a file path, Docling resolves links like "/about/" against the temp folder
             # and fails the whole page; a stream uses `base_url`, or keeps links as written.
-            source = docling.DocumentStream(name=path.name, stream=io.BytesIO(path.read_bytes()))
-        else:
-            converter = self._converter(paginated=is_image, timeout=MAX_TIMEOUT, with_ocr=is_image)
+            source = docling.DocumentStream(
+                name=path.name, stream=io.BytesIO(_normalize_html(path.read_bytes()))
+            )
         try:
+            if source_format != SourceFormat.HTML:
+                converter = self._converter(
+                    paginated=is_image,
+                    timeout=MAX_TIMEOUT,
+                    with_ocr=is_image,
+                    ocr_language=ocr_language,
+                )
             result = converter.convert(source, raises_on_error=False)
         except Exception as error:
             logger.warning("Conversion failed: %s", type(error).__name__)
@@ -313,7 +555,8 @@ class DoclingConverter:
             ]
         else:
             units = [ConvertedUnit(page=None, markdown=document.export_to_markdown())]
-        units = [unit for unit in units if unit.markdown.strip()]
+        missing = [unit.page for unit in units if not _text_tokens(unit.markdown)]
+        units = [unit for unit in units if _text_tokens(unit.markdown)]
         if not units:
             if source_format == SourceFormat.HTML:
                 raise SourceError(
@@ -325,6 +568,23 @@ class DoclingConverter:
         limitations = []
         if result.status == docling.ConversionStatus.PARTIAL_SUCCESS:
             limitations.append("Part of this file could not be converted.")
+        if source_format == SourceFormat.HTML and _html_has_sparse_body(
+            "\n\n".join(unit.markdown for unit in units)
+        ):
+            limitations.append(
+                "This page contains many headings but very little body text. "
+                "FAQ answers or other content may be missing. Check the converted text "
+                "against the original page, or upload a complete document."
+            )
+        if is_image:
+            if missing:
+                limitations.append("Some image pages contained no readable text.")
+            if any(_text_tokens(unit.markdown) < MIN_READABLE_TOKENS for unit in units):
+                limitations.append(
+                    f"Very little text could be read from this image "
+                    f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
+                    "Check the converted text and selected language."
+                )
         progress(1, 1)
         return ConversionOutput(units=units, limitations=limitations)
 

@@ -564,7 +564,8 @@ textarea {
 .badge-fetching,
 .badge-converting,
 .badge-running,
-.badge-outdated {
+.badge-outdated,
+.badge-warning {
   background: var(--yellow-100);
   color: var(--yellow-700);
 }

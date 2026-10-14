@@ -36,5 +36,9 @@
 {% endmacro %}
 
 {% macro status_badge(source) %}
-  <span class="badge badge-{{ source.status.value }}">{{ source.status.value | capitalize }}</span>
+  {% if source.status.value == "converted" and source.limitations %}
+    <span class="badge badge-warning">Converted with warnings</span>
+  {% else %}
+    <span class="badge badge-{{ source.status.value }}">{{ source.status.value | capitalize }}</span>
+  {% endif %}
 {% endmacro %}

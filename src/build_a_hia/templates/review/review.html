@@ -45,6 +45,11 @@
         Unresolved gaps do not block the download; they are listed in the internal review workbook.
       </p>
       {% if gaps %}
+        <p class="meta">
+          {% for kind, items in gaps | groupby("kind_label") %}
+            {{ kind }}: {{ items | length }}{% if not loop.last %} · {% endif %}
+          {% endfor %}
+        </p>
         <ul class="source-list">
           {% set on_overview = true %}
           {% for gap in gaps %}

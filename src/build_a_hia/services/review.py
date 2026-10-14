@@ -8,6 +8,7 @@ sub-categories and conversion problems; their status lives in per-gap table rows
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import date
 from typing import Any
 
 from .assembly import AssembledCategory, AssembledSubcategory
@@ -34,18 +35,26 @@ from .storage import TableStore, mutate_entity
 
 MAX_QUESTION_LENGTH = 200
 MAX_FIELD_LENGTH = 5000
+OPTIONAL_GAP_FIELDS = frozenset({"address", "open_weekdays", "open_weekend"})
+SOURCE_AGE_DAYS = 365
 GAP_ROW_PREFIX = "gap:"
 GAP_STATUSES = {"open": "Open", "resolved": "Resolved", "wont_fix": "Won't fix"}
 GAP_KIND_LABELS = {
     **ISSUE_LABELS,
     "conversion": "Conversion problem",
     "empty": "No supporting content",
+    "undated": "Source date unknown",
 }
 SUGGESTED_ACTIONS = {
     "missing": "Ask the program team for this information, or leave the field blank.",
     "conflict": "Check with program team which information is current.",
     "outdated": "Confirm that the information is still valid.",
+    "undated": "Confirm the source date or check that its information is still valid.",
     "uncertain_translation": "Ask a native speaker to check the translation.",
+    "wrong_programme": (
+        "Find evidence for the intended programme; do not reuse another programme's facts."
+    ),
+    "uncertain_scope": "Confirm which programme this information applies to before adding it.",
     "unsupported": "Find a source for this information, or leave it out.",
     "unverified": "Check the value against the source and add it manually if correct.",
     "structure": "Check the order and nesting of the questions.",
@@ -72,8 +81,14 @@ def _edited(old: FieldValue, text: str) -> FieldValue:
         return old
     original = old.original if old.edited else old.text
     if old.edited and text == original:
-        return FieldValue(text=text, evidence=old.evidence)
-    return FieldValue(text=text, evidence=old.evidence, edited=True, original=original)
+        return FieldValue(text=text, evidence=old.evidence, inherited_from=old.inherited_from)
+    return FieldValue(
+        text=text,
+        evidence=old.evidence,
+        edited=True,
+        original=original,
+        inherited_from=old.inherited_from,
+    )
 
 
 def _clean_text(field: str, value: str) -> str:
@@ -381,22 +396,28 @@ def collect_gaps(
     categories: list[AssembledCategory],
     sources: list[Source],
     overrides: dict[str, dict[str, Any]],
+    *,
+    reference_date: str = "",
 ) -> list[Gap]:
     """Collect the gaps of a draft, merged with the reviewer's stored values.
 
     Gaps come from content issues, empty sub-categories, and sources that failed or were
     cancelled or have conversion limitations. Facts in failed sources are unavailable, not
-    missing.
+    missing. Blank optional address/hours fields are not gaps. Source-age warnings
+    are summarised once per source, only after 365 days or when its date is unknown.
 
     Args:
         categories: Assembled categories with their content.
         sources: Sources of the session.
         overrides: Reviewer values per gap ID, from `GapStore.overrides`.
+        reference_date: Date for age checks, or "" to use each draft's generation date.
 
     Returns:
         Gaps in sub-category order, followed by source gaps.
     """
     gaps: list[Gap] = []
+    by_source = {source.id: source for source in sources}
+    source_dates: dict[str, tuple[Source, list[Evidence], str]] = {}
 
     def add(gap_id: str, sub: AssembledSubcategory | None, **values: str) -> None:
         override = overrides.get(gap_id, {})
@@ -439,6 +460,33 @@ def collect_gaps(
                     issue="No offers or questions are supported by the sources.",
                 )
             for issue in content.issues:
+                if issue.kind == "missing" and issue.field in OPTIONAL_GAP_FIELDS:
+                    continue
+                if issue.kind == "outdated":
+                    known_sources = dict.fromkeys(
+                        evidence.source_id
+                        for evidence in issue.evidence
+                        if evidence.source_id in by_source
+                    )
+                    if known_sources:
+                        on = date.fromisoformat(reference_date or content.generated_on)
+                        for source_id in known_sources:
+                            source = by_source[source_id]
+                            if (
+                                source.document_date
+                                and (on - date.fromisoformat(source.document_date)).days
+                                <= SOURCE_AGE_DAYS
+                            ):
+                                continue
+                            if source_id not in source_dates:
+                                source_dates[source_id] = (source, [], issue.id)
+                            evidence = source_dates[source_id][1]
+                            evidence.extend(
+                                item
+                                for item in issue.evidence
+                                if item.source_id == source_id and item not in evidence
+                            )
+                        continue
                 item_type, item = sub.item_label(issue.item_ref)
                 add(
                     issue.id,
@@ -450,6 +498,27 @@ def collect_gaps(
                     issue=issue.description,
                     source_reference=evidence_reference(issue.evidence),
                 )
+
+    for source, evidence, original_id in source_dates.values():
+        gap_id = f"src-{source.id}-date"
+        if gap_id not in overrides and original_id in overrides:
+            overrides = {**overrides, gap_id: overrides[original_id]}
+        dated = bool(source.document_date)
+        add(
+            gap_id,
+            None,
+            kind="outdated" if dated else "undated",
+            item_type="Source",
+            item=source.reference,
+            issue=(
+                f"{source.title}: dated {source.document_date}; more than 365 days "
+                "before the reference date. Check that it is still current."
+                if dated
+                else f"{source.title}: no document date is available. "
+                "An unknown date does not mean the information is outdated."
+            ),
+            source_reference=evidence_reference(evidence),
+        )
 
     for source in sources:
         if source.status in (SourceStatus.FAILED, SourceStatus.CANCELLED):
