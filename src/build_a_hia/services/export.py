@@ -210,7 +210,12 @@ class ExportService:
             structure=structure,
             subcategories=reviews,
             categories=categories,
-            gaps=collect_gaps(categories, sources, self._gaps.overrides(session.key)),
+            gaps=collect_gaps(
+                categories,
+                sources,
+                self._gaps.overrides(session.key),
+                reference_date=session.context.reference_date if session.context else "",
+            ),
             sources=sources,
         )
         self._check(session, plan)

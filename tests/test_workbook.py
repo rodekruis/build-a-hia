@@ -71,7 +71,11 @@ def _categories():
         ],
         issues=[
             Issue(
-                id="i1", kind="missing", item_ref="o1", field="address", description="No address."
+                id="i1",
+                kind="missing",
+                item_ref="o1",
+                field="description",
+                description="No description.",
             )
         ],
         generated_on="2026-10-07",
@@ -279,9 +283,9 @@ def test_review_workbook_has_internal_tabs_and_stable_gap_columns():
         "Beds",
         "Offer",
         "2 / hyperlink-http-evil-example-click",
-        "address",
+        "description",
         "Missing information",
-        "No address.",
+        "No description.",
     ]
     evidence = [[c.value for c in row] for row in review["Evidence"].iter_rows(min_row=3)]
     description = next(row for row in evidence if row[4] == "Description")

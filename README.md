@@ -13,8 +13,6 @@ Filling that sheet by hand from guidance documents, service lists and web pages 
 5. **Review**: staff check each sub-category against the cited evidence, edit it and approve it. Gaps (missing, conflicting or outdated information, failed sources) get a status, a suggested action and a contact.
 6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
 
-Programme applicability is a semantic AI assessment, not a guarantee of factual correctness; staff must still review the evidence. Existing drafts are not retrospectively rechecked: regenerate them to run the independent scope check. Approving a checked draft does not restore withheld facts; staff can add corrected content manually after verifying programme-specific evidence.
-
 Work happens in a temporary, anonymous session: there are no accounts, and all documents and drafts are deleted after 2 hours of inactivity or 24 hours at the latest.
 
 ```mermaid

@@ -13,7 +13,7 @@ from .context import ProjectContext
 from .scope import scope_values
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-14.3"
+PROMPT_VERSION = "2026-10-14.4"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -149,6 +149,13 @@ question under another question, set parent_ref to the parent's ref; otherwise u
 - issues: information that is missing, conflicting, possibly outdated, uncertain in \
 translation, for another programme ("wrong_programme"), or of unclear programme \
 applicability ("uncertain_scope"). Name the affected item and field.
+Keep issues short and actionable, not a checklist of empty fields. Blank address, \
+open_weekdays and open_weekend are optional: leave them blank without a "missing" issue, \
+especially for online services and forms. Do not flag a source as "outdated" simply \
+because it is undated or published within 365 days before the reference date (use today \
+when no reference date is given). For older sources, cite the source once rather than \
+repeating age warnings for each field or offer. Preserve conflicts, scope problems and \
+genuinely missing access requirements.
 Leave text "" and chunk_ids [] for anything the sources do not say. Do not repeat offers or \
 questions that belong in another sub-category of the structure."""
 

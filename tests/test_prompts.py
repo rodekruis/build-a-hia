@@ -158,3 +158,13 @@ def test_shared_contact_check_has_offer_identity_empty_fields_and_scope_safeguar
     assert "another programme" in audit
     assert "contact_conflicts" in audit
     assert "Do not invent missing hours or addresses" in audit
+
+
+def test_content_prompt_limits_optional_field_and_source_age_gap_noise():
+    category = STRUCTURE.categories[0]
+    messages = content_messages(CONTEXT, SOURCES, STRUCTURE, category, category.children[0])
+    task = messages[-1]["content"]
+    assert 'without a "missing" issue' in task
+    assert "365 days" in task
+    assert "cite the source once" in task
+    assert "Preserve conflicts, scope problems" in task

@@ -590,6 +590,114 @@ def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited
     assert "S3-p1-c1" in internal
 
 
+def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
+    ready_client, services, run_jobs
+):
+    client = ready_client
+    key = session_key_of(client)
+    recent = services.sources.repository.list_for(key)[0]
+
+    def set_date(source):
+        source.document_date = "2025-10-02"
+        source.document_date_origin = "user"
+        return True
+
+    services.sources.repository.mutate(key, recent.id, set_date)
+    undated = add_converted_source(services, key, ["Service contact."], "Undated page")
+    old = add_converted_source(services, key, ["Old service guidance."], "Old guide")
+
+    def set_old_date(source):
+        source.document_date = "2024-07-01"
+        source.document_date_origin = "user"
+        return True
+
+    services.sources.repository.mutate(key, old.id, set_old_date)
+    services.sessions.approve_sources(key)
+    client.post("/structure/propose", data={"instructions": ""})
+    run_jobs(PROPOSAL)
+    client.post("/structure/approve", data={"version": 1})
+    client.post("/content/generate")
+    drafts = []
+    for name in ("Night shelter", "Cash assistance"):
+        issues = (
+            [
+                {
+                    "kind": "missing",
+                    "item": name,
+                    "field": field,
+                    "description": "Optional field not given.",
+                    "chunk_ids": [],
+                }
+                for field in ("address", "open_weekdays", "open_weekend")
+            ]
+            + [
+                {
+                    "kind": "outdated",
+                    "item": name,
+                    "field": field,
+                    "description": "Possibly outdated.",
+                    "chunk_ids": [chunk],
+                }
+                for field in ("description", "phone_numbers", "address")
+                for chunk in ("S1-p1-c1", "S2-p1-c1", "S3-p1-c1")
+            ]
+            + [
+                {
+                    "kind": "conflict",
+                    "item": name,
+                    "field": "need_to_know",
+                    "description": "Eligibility differs between sources.",
+                    "chunk_ids": ["S1-p1-c1"],
+                }
+            ]
+        )
+        drafts.append(
+            {"offers": [offer(cited(name, "S1-p1-c1"))], "questions": [], "issues": issues}
+        )
+    run_jobs(*drafts)
+    workspace = services.sessions.get_active(key)
+    plan = services.exports.plan(workspace)
+    assert sum(len(sub.content.issues) for sub in plan.subcategories) == 26
+    assert len(plan.gaps) == 4
+    assert sorted(gap.kind for gap in plan.gaps) == ["conflict", "conflict", "outdated", "undated"]
+    overview = client.get("/review").data.decode()
+    assert "Conflicting sources: 2" in overview
+    assert "Possibly outdated: 1" in overview
+    assert "Source date unknown: 1" in overview
+    assert "Optional field not given" not in overview
+    assert f"src-{recent.id}-date" not in overview
+    date_gap = f"src-{undated.id}-date"
+    client.post(
+        f"/gaps/{date_gap}",
+        data={
+            "status": "resolved",
+            "suggested_action": "Checked with service",
+            "suggested_contact": "Service desk",
+            "back": "",
+        },
+    )
+    for sub in plan.subcategories:
+        page = client.get(f"/content/{sub.key}").data.decode()
+        assert "Eligibility differs" in page
+        assert "Possibly outdated." not in page
+        assert "Optional field not given" not in page
+        client.post(
+            f"/content/{sub.key}/approve",
+            data={
+                "blob": sub.state.blob,
+                "disclosure_reviewed": "y",
+            },
+        )
+    client.post("/download")
+    snapshot = services.exports.latest(key)["snapshot"]
+    response = client.get(f"/download/{snapshot}/review-internal.xlsx")
+    workbook = load_workbook(io.BytesIO(response.data))
+    rows = list(workbook["Gaps"].iter_rows(min_row=3, values_only=True))
+    assert len(rows) == 4
+    unknown_date = next(row for row in rows if row[5] == "Source date unknown")
+    assert unknown_date[-3:] == ("Checked with service", "Service desk", "Resolved")
+
+
 def test_downloads_are_isolated_and_replaced(generated, services, app):
     client, key, night, cash = generated
     _approve_all(client, services, key, night, cash)
