@@ -16,10 +16,28 @@ class ScopeVerdict(BaseModel):
     reason: str
 
 
+class ContactConflict(BaseModel):
+    """Alternative values for the same service/contact role, not additional contacts."""
+
+    item: str
+    field: Literal["phone_numbers", "emails", "web_urls"]
+    candidates: list[CitedText]
+    value_ids: list[str]
+
+
+class ContactRewrite(BaseModel):
+    """A narrowly corrected prose value containing only the preferred contact."""
+
+    value_id: str
+    replacement: CitedText
+
+
 class ScopeReview(BaseModel):
-    """Structured output of the independent scope check."""
+    """Structured output of the independent scope and contact-conflict check."""
 
     verdicts: list[ScopeVerdict]
+    contact_conflicts: list[ContactConflict]
+    contact_rewrites: list[ContactRewrite]
 
 
 class ScopeReviewError(Exception):

@@ -5,6 +5,7 @@ from factories import (
     DRAFT_FOR_ROUTES,
     PROPOSAL,
     FakeModel,
+    add_converted_source,
     cited,
     offer,
     question,
@@ -363,6 +364,123 @@ def test_scope_rejections_stay_out_of_approved_public_export_but_keep_cited_gaps
     assert "S1-p1-c1" in internal
     assert "T-SUY Projesi" in internal
     assert "Find evidence for the intended programme" in internal
+
+
+def test_contact_precedence_is_consistent_in_approved_subcategories_and_exports(
+    ready_client, services, run_jobs
+):
+    client = ready_client
+    key = session_key_of(client)
+    for phone, email, document_date, source_format in [
+        ("213913935", "tracing@example.org", "2013-09-27", "pdf"),
+        ("213 913 925", "rlf@example.org", "2025-10-23", "html"),
+    ]:
+        source = add_converted_source(
+            services,
+            key,
+            [f"Family tracing: {phone}, {email}."],
+            "Family tracing",
+        )
+
+        def metadata(source, document_date=document_date, source_format=source_format):
+            source.document_date = document_date
+            source.document_date_origin = "user"
+            source.format = source_format
+            return True
+
+        services.sources.repository.mutate(key, source.id, metadata)
+    services.sessions.approve_sources(key)
+    proposal = {
+        "categories": [
+            {
+                "name": "Family tracing",
+                "description": "",
+                "subcategories": [
+                    {"name": name, "description": "", "chunk_ids": ["S2-p1-c1"]}
+                    for name in ("Pesquisa de familiares", "Contacto em Portugal")
+                ],
+            }
+        ],
+        "notes": "",
+    }
+    client.post("/structure/propose", data={"instructions": ""})
+    run_jobs(proposal)
+    client.post("/structure/approve", data={"version": 1})
+    client.post("/content/generate")
+    scripts = []
+    for name in ("Pesquisa de familiares", "Contacto em Portugal"):
+        draft = {
+            "offers": [
+                offer(
+                    cited(name, "S2-p1-c1"),
+                    phone_numbers=[cited("213913935", "S2-p1-c1")],
+                    emails=[cited("tracing@example.org", "S2-p1-c1")],
+                )
+            ],
+            "questions": [
+                question(
+                    "q1",
+                    f"How can I contact {name}?",
+                    cited("Call 213913935 or 213 913 925.", "S2-p1-c1", "S3-p1-c1"),
+                )
+            ],
+            "issues": [],
+        }
+        review = scope_response(draft)
+        review["contact_conflicts"] = [
+            {
+                "item": "Family tracing",
+                "field": field,
+                "value_ids": targets,
+                "candidates": [cited(old, "S2-p1-c1"), cited(new, "S3-p1-c1")],
+            }
+            for field, targets, old, new in [
+                ("phone_numbers", ["o0.phone_numbers.0", "q0.answer"], "213913935", "213 913 925"),
+                ("emails", ["o0.emails.0"], "tracing@example.org", "rlf@example.org"),
+            ]
+        ]
+        review["contact_rewrites"] = [
+            {
+                "value_id": "q0.answer",
+                "replacement": cited("Call 213 913 925.", "S3-p1-c1"),
+            }
+        ]
+        scripts.extend([draft, review])
+    run_jobs(*scripts)
+    structure = services.structures.approved(key)[1]
+    for _category, sub in structure.subcategories():
+        state = _state(services, key, sub.key)
+        assert state.status == "done"
+        client.post(
+            f"/content/{sub.key}/approve",
+            data={"blob": state.blob, "disclosure_reviewed": "y"},
+        )
+        assert _state(services, key, sub.key).approved
+    client.post("/download")
+    latest = services.exports.latest(key)
+
+    def values(filename):
+        response = client.get(f"/download/{latest['snapshot']}/{filename}")
+        assert response.status_code == 200
+        workbook = load_workbook(io.BytesIO(response.data))
+        return [
+            str(cell.value)
+            for sheet in workbook.worksheets
+            for row in sheet
+            for cell in row
+            if cell.value is not None
+        ]
+
+    public = values("hia.xlsx")
+    assert public.count("213 913 925") == 2
+    assert public.count("rlf@example.org") == 2
+    assert public.count("Call 213 913 925.") == 2
+    assert "213913935" not in "\n".join(public)
+    assert "tracing@example.org" not in "\n".join(public)
+    internal = "\n".join(values("review-internal.xlsx"))
+    assert "213913935" in internal and "tracing@example.org" in internal
+    assert "Conflicting sources" in internal
+    assert "S2-p1-c1" in internal and "S3-p1-c1" in internal
 
 
 def test_downloads_are_isolated_and_replaced(generated, services, app):

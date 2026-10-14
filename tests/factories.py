@@ -87,6 +87,8 @@ def question(ref: str, text: str, answer: dict, parent_ref: str = "") -> dict:
 def scope_response(draft: dict, **verdicts: str) -> dict:
     """Script scope approval for existing fixtures, with explicit per-value overrides."""
     return {
+        "contact_conflicts": [],
+        "contact_rewrites": [],
         "verdicts": [
             {
                 "value_id": value.value_id,
@@ -94,7 +96,7 @@ def scope_response(draft: dict, **verdicts: str) -> dict:
                 "reason": "Scripted programme applicability assessment.",
             }
             for value in scope_values(SubcategoryDraft.model_validate(draft))
-        ]
+        ],
     }
 
 

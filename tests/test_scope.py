@@ -42,6 +42,8 @@ def _draft():
 def _review(draft, **rejected):
     return ScopeReview.model_validate(
         {
+            "contact_conflicts": [],
+            "contact_rewrites": [],
             "verdicts": [
                 {
                     "value_id": value.value_id,
@@ -49,7 +51,7 @@ def _review(draft, **rejected):
                     "reason": "The cited amount/service is for T-SUY, not YŞEY.",
                 }
                 for value in scope_values(draft)
-            ]
+            ],
         }
     )
 

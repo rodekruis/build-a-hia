@@ -8,6 +8,7 @@ from typing import Any
 
 from .checks import ChunkIndex, ChunkRef, check_draft
 from .chunking import estimate_tokens
+from .contacts import apply_contact_review
 from .content import StructureProposal, SubcategoryDraft
 from .context import ProjectContext
 from .drafting import ContentService, StructureService
@@ -326,9 +327,11 @@ class GenerationProcessor:
             )
             try:
                 draft = apply_scope_review(draft, review)
+                draft = apply_contact_review(draft, review, materials, index)
             except ScopeReviewError as error:
                 raise JobFailedError(
-                    "The programme-scope check was incomplete. No new content was saved. Try again."
+                    "The programme-scope check was incomplete or its contact conflict check "
+                    "was invalid. No new content was saved. Try again."
                 ) from error
         content = check_draft(
             draft,

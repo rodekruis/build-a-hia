@@ -111,3 +111,20 @@ def test_scope_request_uses_full_sources_context_and_untrusted_identified_values
     assert '"value_id": "q0.answer"' in data
     assert "Which programme?" in data
     assert data.count("</sources>") == 1
+
+
+def test_contact_policy_is_shared_by_drafting_and_independent_audit():
+    category = STRUCTURE.categories[0]
+    subcategory = category.children[0]
+    draft = SubcategoryDraft(offers=[], questions=[], issues=[])
+    messages = scope_messages(CONTEXT, SOURCES, STRUCTURE, category, subcategory, draft)
+
+    system = messages[0]["content"]
+    assert "most recent date" in system
+    assert "Web page over a PDF" in system
+    assert "retrieval dates or source order" in system
+    assert "absence from a newer source alone is not proof" in system
+    audit = messages[-2]["content"]
+    assert "contact_conflicts" in audit and "contact_rewrites" in audit
+    assert "value_ids of ALL" in audit
+    assert "No rewrite is needed for individual contact list entries" in audit

@@ -1,7 +1,16 @@
 from dataclasses import replace
 
 import pytest
-from factories import PROPOSAL, FakeModel, cited, offer, question, scope_response, session_key_of
+from factories import (
+    PROPOSAL,
+    FakeModel,
+    add_converted_source,
+    cited,
+    offer,
+    question,
+    scope_response,
+    session_key_of,
+)
 
 from build_a_hia.services.drafting import DraftingError
 from build_a_hia.services.generation import GenerationProcessor
@@ -190,6 +199,8 @@ def test_scope_rejection_is_applied_before_storing_content(services, make_proces
     night = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [night.key])
     review = {
+        "contact_conflicts": [],
+        "contact_rewrites": [],
         "verdicts": [
             {
                 "value_id": value_id,
@@ -197,7 +208,7 @@ def test_scope_rejection_is_applied_before_storing_content(services, make_proces
                 "reason": "This service and its facts belong to another programme.",
             }
             for value_id in ("o0.name", "o0.open_weekdays", "o0.phone_numbers.0", "q0.answer")
-        ]
+        ],
     }
     model = FakeModel(DRAFT, review)
 
@@ -216,7 +227,10 @@ def test_scope_rejection_is_applied_before_storing_content(services, make_proces
 @pytest.mark.parametrize(
     "review, expected_error",
     [
-        ({"verdicts": []}, "programme-scope check was incomplete"),
+        (
+            {"verdicts": [], "contact_conflicts": [], "contact_rewrites": []},
+            "programme-scope check was incomplete",
+        ),
         (ModelError("timeout", "The AI model took too long."), "took too long"),
     ],
 )
@@ -285,6 +299,72 @@ def test_empty_draft_does_not_need_a_scope_request(services, make_processor, key
 
     assert services.contents.state(key, night.key).status == "done"
     assert len(model.calls) == 1
+
+
+def test_contact_check_corrects_old_values_using_all_sources_in_the_same_two_calls(
+    services, make_processor, key
+):
+    for text, document_date, source_format in [
+        ("Family tracing phone: 213913935.", "2013-09-27", "pdf"),
+        ("Family tracing phone: 213 913 925.", "2025-10-23", "html"),
+    ]:
+        source = add_converted_source(services, key, [text], "Family tracing")
+
+        def metadata(source, document_date=document_date, source_format=source_format):
+            source.document_date = document_date
+            source.document_date_origin = "user"
+            source.format = source_format
+            return True
+
+        services.sources.repository.mutate(key, source.id, metadata)
+    services.sessions.approve_sources(key)
+    structure = _approved_structure(services, make_processor, key)
+    sub = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [sub.key])
+    draft = {
+        "offers": [
+            offer(
+                cited("Family tracing", "S2-p1-c1"),
+                phone_numbers=[cited("213913935", "S2-p1-c1")],
+            )
+        ],
+        "questions": [
+            question(
+                "q1",
+                "How can I call?",
+                cited("Call 213913935.", "S2-p1-c1"),
+            )
+        ],
+        "issues": [],
+    }
+    review = scope_response(draft)
+    review["contact_conflicts"] = [
+        {
+            "item": "Family tracing",
+            "field": "phone_numbers",
+            "value_ids": ["o0.phone_numbers.0", "q0.answer"],
+            "candidates": [
+                cited("213913935", "S2-p1-c1"),
+                cited("213 913 925", "S3-p1-c1"),
+            ],
+        }
+    ]
+    review["contact_rewrites"] = [
+        {
+            "value_id": "q0.answer",
+            "replacement": cited("Call 213 913 925.", "S3-p1-c1"),
+        }
+    ]
+    model = FakeModel(draft, review)
+    make_processor(model).process_next()
+
+    state = services.contents.state(key, sub.key)
+    assert state.status == "done"
+    content = services.contents.result(key, state)
+    assert content.offers[0].phone_numbers[0].text == "213 913 925"
+    assert content.questions[0].answer.text == "Call 213 913 925."
+    assert all(issue.kind == "conflict" for issue in content.issues)
+    assert len(model.calls) == 2
 
 
 def test_content_is_queued_in_structure_order(services, make_processor, key):
