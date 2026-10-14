@@ -8,6 +8,7 @@ dependencies = [
     "azure-identity>=1.26.0",
     "azure-storage-blob>=12.31.0",
     "azure-storage-queue>=12.18.0",
+    "beautifulsoup4>=4.12,<5",
     "docling>=2.134,<3",
     "flask>=3.1,<4",
     "flask-wtf>=1.2,<2",

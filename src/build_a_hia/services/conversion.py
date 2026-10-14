@@ -42,6 +42,63 @@ OCR_LANGUAGES = {
 }
 _NON_TEXT = re.compile(r"<!--.*?-->|!\[[^\]]*\]\([^)]*\)", re.DOTALL)
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
+_HEADING = re.compile(r"^ {0,3}#{1,6}\s+", re.MULTILINE)
+_HIDDEN_STYLE = re.compile(
+    r"^\s*(?:display\s*:\s*none|visibility\s*:\s*(?:hidden|collapse)|opacity\s*:\s*0)"
+    r"\s*(?:!important\s*)?$",
+    re.IGNORECASE,
+)
+
+
+def _normalize_html(data: bytes) -> bytes:
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(data, "html.parser")
+    for tag in soup.find_all(["script", "noscript", "style", "template", "nav"]):
+        tag.decompose()
+    for tag in soup.find_all(
+        True, attrs={"role": re.compile(r"^\s*navigation\s*$", re.IGNORECASE)}
+    ):
+        tag.decompose()
+    for tag in soup.find_all(True):
+        tag.attrs.pop("hidden", None)
+        tag.attrs.pop("aria-hidden", None)
+        style = tag.get("style")
+        if isinstance(style, str):
+            tag["style"] = ";".join(
+                declaration
+                for declaration in style.split(";")
+                if not _HIDDEN_STYLE.fullmatch(declaration)
+            )
+    # Docling accepts one wrapper around dt/dd, but not nested accordion wrappers.
+    for description_list in soup.find_all("dl"):
+        for wrapper in reversed(description_list.find_all("div")):
+            if (
+                wrapper.find_parent(["dl", "dt", "dd"]) is description_list
+                and wrapper.find(["dt", "dd"]) is not None
+            ):
+                wrapper.unwrap()
+        # Docling's nested-list path otherwise drops prose next to the inner list.
+        if description_list.find("dl") is not None:
+            entries = [
+                tag
+                for tag in description_list.find_all(["dt", "dd"])
+                if tag.find_parent("dl") is description_list
+            ]
+            for entry in entries:
+                entry.name = "h3" if entry.name == "dt" else "div"
+            description_list.name = "div"
+    return soup.encode("utf-8")
+
+
+def _html_has_sparse_body(markdown: str) -> bool:
+    lines = _NON_TEXT.sub("", markdown).splitlines()
+    headings = [line for line in lines if _HEADING.match(line)]
+    if len(headings) < 3:
+        return False
+    heading_tokens = _text_tokens("\n".join(headings))
+    body_tokens = _text_tokens("\n".join(line for line in lines if not _HEADING.match(line)))
+    return body_tokens < 30 and body_tokens * 4 < heading_tokens
 
 
 def readable_text(markdown: str) -> str:
@@ -390,7 +447,9 @@ class DoclingConverter:
             converter = self._html_converter(base_url)
             # From a file path, Docling resolves links like "/about/" against the temp folder
             # and fails the whole page; a stream uses `base_url`, or keeps links as written.
-            source = docling.DocumentStream(name=path.name, stream=io.BytesIO(path.read_bytes()))
+            source = docling.DocumentStream(
+                name=path.name, stream=io.BytesIO(_normalize_html(path.read_bytes()))
+            )
         try:
             if source_format != SourceFormat.HTML:
                 converter = self._converter(
@@ -440,6 +499,14 @@ class DoclingConverter:
         limitations = []
         if result.status == docling.ConversionStatus.PARTIAL_SUCCESS:
             limitations.append("Part of this file could not be converted.")
+        if source_format == SourceFormat.HTML and _html_has_sparse_body(
+            "\n\n".join(unit.markdown for unit in units)
+        ):
+            limitations.append(
+                "This page contains many headings but very little body text. "
+                "FAQ answers or other content may be missing. Check the converted text "
+                "against the original page, or upload a complete document."
+            )
         if is_image:
             if missing:
                 limitations.append("Some image pages contained no readable text.")

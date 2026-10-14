@@ -76,6 +76,12 @@ Sources with sparse text, unreadable pages, incomplete OCR or partial conversion
 
 For failed or cancelled sources, save a different scanned-text language on the source details page before retrying. Cancel an active conversion before changing its language. Successful conversion deletes the original bytes, so converted sources, including older placeholder-only results, must be removed and added again to reconvert.
 
+### Web-page FAQs
+
+Static HTML conversion includes collapsed FAQ answers already present in the page: inline `display:none`, `visibility:hidden`/`collapse`, zero opacity, `hidden` and `aria-hidden` markers are removed from conversion input. Nested description-list accordion wrappers are flattened so questions and answers remain together. Scripts, templates, navigation and stylesheets are excluded; no JavaScript is executed, pages are not rendered, and external or local assets are not fetched. Content loaded only by JavaScript still requires uploading a complete document or saved PDF.
+
+A page with at least three headings, fewer than 30 estimated body-text tokens, and less than one quarter as much body text as heading text shows **Converted with warnings**. This conservative heuristic flags heading-only FAQs without rejecting usable text; it is not a completeness guarantee. Check the converted preview against the original page. The warning is also included as a conversion gap in review and the internal workbook. Re-add previously converted FAQ sources to recover their answers.
+
 ## Background jobs
 
 `python -m build_a_hia.worker` has four commands:

@@ -4,9 +4,10 @@ import pytest
 from factories import make_text_pdf, session_key_of, upload
 
 from build_a_hia.services.chunking import ConvertedUnit
-from build_a_hia.services.conversion import ConversionOutput
+from build_a_hia.services.conversion import ConversionOutput, DoclingConverter
 from build_a_hia.services.inspection import SourceError
 from build_a_hia.services.jobs import ConversionProcessor
+from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import (
     SourceStatus,
     chunks_blob,
@@ -252,6 +253,56 @@ def test_url_source_is_fetched_and_described(workspace_client, services, make_pr
     assert source.document_date == "2026-09-01"
     assert source.document_date_origin == "page metadata"
     assert source.retrieved_at
+
+
+@pytest.mark.parametrize("with_answers", [False, True])
+def test_html_faq_answers_or_warning_reach_chunks_sources_and_review(
+    workspace_client, services, make_processor, with_answers
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/faq"})
+    key = session_key_of(workspace_client)
+    entries = "".join(
+        f"<h2>How can families apply for service {index}?</h2>"
+        + (
+            '<div style="display:none"><p>Visit the office with your identity card.</p></div>'
+            if with_answers
+            else ""
+        )
+        for index in range(4)
+    )
+    page = (
+        "<html><head><title>Registration FAQ</title>"
+        '<meta name="date" content="2026-10-09"></head><body>' + entries + "</body></html>"
+    ).encode()
+    fetcher = FakeFetcher(
+        FetchResult(
+            final_url="https://example.org/faq",
+            content_type="text/html",
+            data=page,
+            last_modified="",
+        )
+    )
+    make_processor(converter=DoclingConverter(), fetcher=fetcher).process_next()
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert source.title == "Registration FAQ"
+    assert source.document_date == "2026-10-09"
+    chunks = json.loads(services.blobs.get(chunks_blob(key, source.id)))
+    assert chunks and all(chunk["id"].startswith("S1-") for chunk in chunks)
+    gaps = collect_gaps([], [source], {})
+    status = workspace_client.get("/sources/status").data
+    if with_answers:
+        assert any("Visit the office with your identity card." in chunk["text"] for chunk in chunks)
+        assert source.limitations == []
+        assert gaps == []
+        assert b"Converted with warnings" not in status
+    else:
+        assert "headings but very little body text" in source.limitations[0]
+        assert b"Converted with warnings" in status
+        assert source.limitations[0].encode() in status
+        assert len(gaps) == 1 and gaps[0].kind == "conversion"
+        assert gaps[0].source_reference == source.reference
 
 
 def test_fetched_pdf_uses_server_date(workspace_client, services, make_processor):
