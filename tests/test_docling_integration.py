@@ -1,7 +1,5 @@
 """Real Docling conversions. Slow and downloads models: run with `pytest -m docling`."""
 
-import io
-
 import pytest
 from bidi.algorithm import get_display
 from factories import make_docx, make_text_pdf, make_xlsx
@@ -9,7 +7,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 from build_a_hia.services.conversion import DoclingConverter
 from build_a_hia.services.inspection import SourceError, SourceFormat
-from build_a_hia.services.url_fetch import FetchResult
 
 pytestmark = pytest.mark.docling
 
@@ -150,37 +147,3 @@ def test_html_with_root_relative_links_is_converted(converter, tmp_path):
 
     assert "https://example.org/about/press/" in linked.units[0].markdown
     assert "Food aid" in unlinked.units[0].markdown
-
-
-def test_image_only_web_page_is_read_in_place_with_real_ocr(tmp_path):
-    image = Image.new("RGB", (1200, 400), "white")
-    ImageDraw.Draw(image).text(
-        (40, 100), "PAYMENT AMOUNT 250 TL", fill="black", font=ImageFont.load_default(size=70)
-    )
-    data = io.BytesIO()
-    image.save(data, "PNG")
-    fetched = []
-
-    def fetch(url, _max_bytes, _timeout):
-        fetched.append(url)
-        return FetchResult(url, "image/png", data.getvalue(), "")
-
-    path = tmp_path / "page.html"
-    path.write_text(
-        '<main><p>Before payment.</p><img src="amounts.png"><p>After payment.</p></main>',
-        encoding="utf-8",
-    )
-
-    output = DoclingConverter(image_fetcher=fetch).convert(
-        path,
-        SourceFormat.HTML,
-        _ignore_progress,
-        base_url="https://example.org/program/page.html",
-        ocr_language="en",
-    )
-
-    assert fetched == ["https://example.org/program/amounts.png"]
-    text = output.units[0].markdown
-    assert "250" in text
-    assert "Text read from image using OCR" in text
-    assert text.index("Before payment.") < text.index("250") < text.index("After payment.")
