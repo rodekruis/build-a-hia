@@ -147,3 +147,13 @@ def test_content_prompt_limits_optional_field_and_source_age_gap_noise():
     assert "365 days" in task
     assert "cite the source once" in task
     assert "Preserve conflicts, scope problems" in task
+
+
+def test_content_prompt_limits_follow_ups_to_one_level_in_the_same_subcategory():
+    category = STRUCTURE.categories[0]
+    messages = content_messages(CONTEXT, SOURCES, STRUCTURE, category, category.children[0])
+
+    task = messages[-1]["content"]
+    assert "only one level of follow-ups" in task
+    assert "a question with a parent_ref must never itself be a parent" in task
+    assert "parent must be a question in this same sub-category" in task

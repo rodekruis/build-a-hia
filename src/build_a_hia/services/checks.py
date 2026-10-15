@@ -343,6 +343,23 @@ def _questions(draft: SubcategoryDraft, checker: _Checker) -> list[Question]:
                     description="Shown as a top-level question because its parent was invalid.",
                 )
             )
+    for question in questions:
+        if not question.parent_ref:
+            continue
+        parent = by_ref[question.parent_ref]
+        while parent.parent_ref:
+            parent = by_ref[parent.parent_ref]
+        if question.parent_ref != parent.ref:
+            question.parent_ref = parent.ref
+            checker.issues.append(
+                Issue(
+                    kind="structure",
+                    item=question.question,
+                    field="question",
+                    description="Moved under its top-level question because HIA supports "
+                    "only one level of follow-ups.",
+                )
+            )
     return questions
 
 
@@ -379,6 +396,7 @@ def check_draft(
     emails and web addresses must also literally appear in the cited passages. Offers
     without a supported name are left out, item counts are capped, and questions with an
     invalid or cyclic parent become top-level. Every removal is recorded as an issue.
+    Deeper follow-ups are moved under their top-level ancestor, with a structure issue.
     Programme applicability and semantic support are assessed during generation and staff
     review, not independently established by these deterministic checks.
 

@@ -277,6 +277,22 @@ def test_questions_can_be_added_and_nested(generated, services):
     updated = services.contents.result(key, _state(services, key, night))
     assert updated.questions[1].parent_ref == "q1"
     assert updated.questions[1].answer.text == "Two weeks."
+    blob = _state(services, key, night).blob
+    response = client.post(
+        f"/content/{night}/questions/new",
+        data={
+            "blob": blob,
+            "question": "More details?",
+            "answer": "More.",
+            "parent": updated.questions[1].ref,
+        },
+        headers={"Accept": "application/json"},
+    )
+    assert response.status_code == 400
+    assert response.json["saved"] is False
+    assert "one level" in response.json["message"]
+    assert _state(services, key, night).blob == blob
+    assert services.contents.result(key, _state(services, key, night)) == updated
 
 
 def test_gap_action_can_be_updated_without_status_or_contact(generated, services):

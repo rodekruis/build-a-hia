@@ -17,7 +17,6 @@ from .checks import (
     SINGLE_LINE_FIELDS,
     clean_line,
     clean_markdown,
-    has_cycle,
     normalize_email,
     normalize_url,
 )
@@ -208,13 +207,16 @@ def _question_values(question: str, answer: str) -> tuple[str, str]:
 
 def _set_parent(content: GeneratedContent, question: Question, parent_ref: str) -> None:
     if parent_ref:
-        _find_question(content, parent_ref)
-    previous = question.parent_ref
+        parent = _find_question(content, parent_ref)
+        if parent.ref == question.ref:
+            raise ReviewError("A question cannot be nested under itself.")
+        if parent.parent_ref:
+            raise ReviewError(
+                "HIA supports only one level of follow-ups. Choose a top-level question."
+            )
+        if any(item.parent_ref == question.ref for item in content.questions):
+            raise ReviewError("A question with follow-ups cannot become a follow-up itself.")
     question.parent_ref = parent_ref
-    by_ref = {item.ref: item for item in content.questions}
-    if parent_ref and has_cycle(question, by_ref):
-        question.parent_ref = previous
-        raise ReviewError("A question cannot be nested under itself or its own follow-ups.")
 
 
 def update_question(
@@ -231,15 +233,15 @@ def update_question(
 
     Raises:
         ReviewError: If the question or parent no longer exists, the question or answer is
-            empty, or the new parent would create a cycle.
+            empty, or the new parent would create a cycle or more than one level of follow-ups.
     """
     item = _find_question(content, ref)
     question_text, answer_text = _question_values(question, answer)
+    _set_parent(content, item, parent_ref)
     if question_text != item.question:
         item.question = question_text
         item.question_edited = True
     item.answer = _edited(item.answer, answer_text)
-    _set_parent(content, item, parent_ref)
 
 
 def add_question(content: GeneratedContent, question: str, answer: str, parent_ref: str) -> str:
@@ -255,7 +257,8 @@ def add_question(content: GeneratedContent, question: str, answer: str, parent_r
         The ref of the new question.
 
     Raises:
-        ReviewError: If the question or answer is empty or the parent does not exist.
+        ReviewError: If the question or answer is empty, the parent does not exist, or the
+            parent is itself a follow-up.
     """
     question_text, answer_text = _question_values(question, answer)
     item = Question(

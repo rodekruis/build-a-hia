@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from .context import ProjectContext
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-15.1"
+PROMPT_VERSION = "2026-10-15.2"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -144,7 +144,9 @@ access requirements); more_info (other useful details); chapter (only if the sou
 these services, otherwise "").
 - questions: questions people in the target group would ask about this sub-category, answered \
 from the sources. A question is one line. Use refs "q1", "q2", and so on. To nest a follow-up \
-question under another question, set parent_ref to the parent's ref; otherwise use "".
+question under a top-level question, set parent_ref to the parent's ref; otherwise use "". \
+HIA supports only one level of follow-ups: a question with a parent_ref must never itself \
+be a parent. The parent must be a question in this same sub-category.
 - issues: information that is missing, conflicting, possibly outdated, uncertain in \
 translation, for another programme ("wrong_programme"), or of unclear programme \
 applicability ("uncertain_scope"). Name the affected item and field.
