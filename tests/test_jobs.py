@@ -1,12 +1,16 @@
+import io
 import json
+from types import SimpleNamespace
 
 import pytest
-from factories import make_text_pdf, session_key_of, upload
+from factories import make_png, make_text_pdf, session_key_of, upload
+from PIL import Image
 
+from build_a_hia import worker
 from build_a_hia.services.chunking import ConvertedUnit, estimate_tokens
 from build_a_hia.services.conversion import ConversionOutput, DoclingConverter
 from build_a_hia.services.generation import load_source_material
-from build_a_hia.services.inspection import SourceError
+from build_a_hia.services.inspection import SourceError, SourceFormat
 from build_a_hia.services.jobs import ConversionProcessor
 from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import (
@@ -254,6 +258,99 @@ def test_url_source_is_fetched_and_described(workspace_client, services, make_pr
     assert source.document_date == "2026-09-01"
     assert source.document_date_origin == "page metadata"
     assert source.retrieved_at
+
+
+@pytest.mark.parametrize("image_format", ["PNG", "JPEG"])
+def test_image_urls_use_image_conversion_with_the_selected_language(
+    workspace_client, services, make_processor, image_format
+):
+    workspace_client.post(
+        "/sources/url",
+        data={"url": "https://example.org/image", "ocr_language": "ar"},
+    )
+    key = session_key_of(workspace_client)
+    data = io.BytesIO()
+    Image.new("RGB", (600, 400), "white").save(data, format=image_format)
+    converter = FakeConverter()
+
+    make_processor(
+        converter=converter,
+        fetcher=FakeFetcher(
+            FetchResult("https://example.org/image", "image/*", data.getvalue(), "")
+        ),
+    ).process_next()
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert source.format == image_format.lower()
+    assert source.page_count == 1
+    assert converter.ocr_languages == ["ar"]
+
+
+@pytest.mark.parametrize("read_image", [True, False])
+def test_worker_embedded_image_ocr_or_warnings_reach_chunks_and_review(
+    workspace_client, services, monkeypatch, read_image
+):
+    page_url = "https://example.org/program/page.html"
+    image_url = "https://example.org/program/Images/amounts.png"
+    page = b'<main><p>Native service information.</p><img src="Images/amounts.png"></main>'
+    workspace_client.post("/sources/url", data={"url": page_url, "ocr_language": "ar"})
+    key = session_key_of(workspace_client)
+    requests = []
+    languages = []
+
+    def safe_fetcher(**limits):
+        def fetch(url):
+            requests.append((url, limits))
+            data = (
+                page
+                if url == page_url
+                else (make_png((600, 400)) if read_image else b"not an image")
+            )
+            return FetchResult(url, "text/html" if url == page_url else "image/png", data, "")
+
+        return SimpleNamespace(fetch=fetch)
+
+    original = DoclingConverter._convert_whole
+
+    def convert_whole(self, path, source_format, progress, base_url, ocr_language, **kwargs):
+        if source_format == SourceFormat.HTML:
+            return original(self, path, source_format, progress, base_url, ocr_language, **kwargs)
+        languages.append(ocr_language)
+        return ConversionOutput(
+            units=[ConvertedUnit(page=1, markdown="Payment amount: 250 TL.")],
+        )
+
+    monkeypatch.setattr(worker, "build_services", lambda _settings: services)
+    monkeypatch.setattr(worker, "SafeFetcher", safe_fetcher)
+    monkeypatch.setattr(DoclingConverter, "_convert_whole", convert_whole)
+    assert worker._convert(services.settings, loop=False, poll_seconds=0) == 0
+
+    [source] = services.sources.list_for(key)
+    assert source.status == SourceStatus.CONVERTED
+    assert [url for url, _limits in requests] == [page_url, image_url]
+    assert requests[1][1]["max_bytes"] <= services.settings.max_url_bytes
+    assert requests[1][1]["timeout_seconds"] <= services.settings.url_timeout_seconds
+    chunks = json.loads(services.blobs.get(chunks_blob(key, source.id)))
+    text = "\n".join(chunk["text"] for chunk in chunks)
+    assert all(chunk["id"].startswith("S1-") for chunk in chunks)
+    assert "Native service information." in text
+    status = workspace_client.get("/sources/status").data
+    gaps = collect_gaps([], [source], {})
+    if read_image:
+        assert languages == ["ar"]
+        assert "250 TL" in text
+        assert "Text read from image using OCR" in text
+        assert image_url in text
+        assert any("OCR may omit or misread" in note for note in source.limitations)
+        assert b"Converted with warnings" in status
+        assert len(gaps) == 1 and gaps[0].kind == "conversion"
+    else:
+        assert languages == []
+        assert any("Could not read content image" in note for note in source.limitations)
+        assert b"Converted with warnings" in status
+        assert source.limitations[0].encode() in status
+        assert len(gaps) == 1 and gaps[0].kind == "conversion"
 
 
 @pytest.mark.parametrize("with_answers", [False, True])
