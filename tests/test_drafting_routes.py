@@ -1,6 +1,7 @@
 import re
 
 import pytest
+from bs4 import BeautifulSoup
 from factories import DRAFT_FOR_ROUTES, PROPOSAL, FakeModel, session_key_of
 
 from build_a_hia import create_app
@@ -84,6 +85,59 @@ def test_draft_is_shown_with_model_notes(drafted):
     assert b"Approve structure" in response.data
 
 
+def test_structure_edit_actions_are_grouped_by_operation_and_keep_their_forms(drafted):
+    page = BeautifulSoup(drafted.get("/structure").data, "html.parser")
+    edits = [
+        edit
+        for edit in page.select("details.tree-edit")
+        if (summary := edit.find("summary")) is not None
+        and summary.get_text(strip=True) in {"Edit category", "Edit sub-category"}
+    ]
+    assert edits
+    ids = [element["id"] for element in page.select("[id]")]
+    assert len(ids) == len(set(ids))
+    for edit in edits:
+        summary = edit.find("summary")
+        assert summary is not None
+        actions = edit.find("div", class_="source-actions", recursive=False)
+        assert actions is not None
+        action_labels = [button.get_text(strip=True) for button in actions.find_all("button")]
+        assert action_labels[0] == "Save"
+        assert all(
+            label in {"Save", "Move up", "Move down", "Remove", "Remove with its sub-categories"}
+            for label in action_labels
+        )
+        target_forms = edit.select("form.tree-target-form")
+        expected_labels = (
+            ["Move", "Merge"] if summary.get_text(strip=True) == "Edit sub-category" else ["Merge"]
+        )
+        assert [
+            button.get_text(strip=True) for button in edit.select("form.tree-target-form > button")
+        ] == expected_labels
+        assert [
+            label.get_text(strip=True) for label in edit.select("form.tree-target-form > label")
+        ] == (["Move to category", "Merge into"] if len(expected_labels) == 2 else ["Merge into"])
+        assert list(actions.find_next_siblings("form")) == target_forms
+        for form in target_forms:
+            assert form.find("select", attrs={"name": "target"}) is not None
+            assert len(form.find_all("button")) == 1
+        assert not edit.select("form form")
+        for button in edit.find_all("button"):
+            form = (
+                edit.find("form", id=button["form"])
+                if button.has_attr("form")
+                else button.find_parent("form")
+            )
+            assert form is not None
+            assert form["method"] == "post"
+            for field in ("csrf_token", "version", "key"):
+                assert form.find("input", attrs={"name": field}) is not None
+            if button.get_text(strip=True) == "Save":
+                assert form["action"] == "/structure/rename"
+                assert form.find("input", attrs={"name": "name"}) is not None
+                assert form.find("textarea", attrs={"name": "description"}) is not None
+
+
 def test_rename_add_move_and_remove(drafted, services):
     state, draft = _draft(services, drafted)
     shelter, money = draft.categories
@@ -124,25 +178,56 @@ def test_invalid_keys_are_rejected(drafted, services):
     assert _draft(services, drafted)[0].version == 1
 
 
-def test_merge_shows_preview_before_applying(drafted, services):
+@pytest.mark.parametrize("level", ["category", "subcategory"])
+def test_merge_applies_immediately_and_rejects_repeated_submission(drafted, services, level):
     _state, draft = _draft(services, drafted)
     shelter, money = draft.categories
+    source = money if level == "category" else money.children[0]
+    target = shelter if level == "category" else shelter.children[0]
+    data = {"version": 1, "key": source.key, "target": target.key}
 
-    preview = drafted.post(
-        "/structure/merge", data={"version": 1, "key": money.key, "target": shelter.key}
-    )
-    assert preview.status_code == 200
-    assert b"Cash assistance" in preview.data
-    assert _draft(services, drafted)[0].version == 1
+    response = drafted.post("/structure/merge", data=data)
 
-    drafted.post(
-        "/structure/merge",
-        data={"version": 1, "key": money.key, "target": shelter.key, "confirm": "y"},
-    )
+    assert response.status_code == 302
+    assert response.headers["Location"].startswith("/structure")
     state, draft = _draft(services, drafted)
-    assert [(c.name, [s.name for s in c.children]) for c in draft.categories] == [
-        ("Shelter", ["Night shelter", "Cash assistance"])
-    ]
+    assert state.version == 2
+    assert draft.find(target.key)[1].name == target.name
+    assert [(c.name, [s.name for s in c.children]) for c in draft.categories] == (
+        [("Shelter", ["Night shelter", "Cash assistance"])]
+        if level == "category"
+        else [("Shelter", ["Night shelter"]), ("Money", [])]
+    )
+
+    repeated = drafted.post("/structure/merge", data=data, follow_redirects=True)
+    assert b"changed in the meantime" in repeated.data
+    repeated_state, repeated_draft = _draft(services, drafted)
+    assert repeated_state.version == 2
+    assert repeated_draft == draft
+
+
+@pytest.mark.parametrize("case", ["self", "mixed_levels", "unknown_target", "missing_target"])
+def test_invalid_direct_merges_leave_the_draft_unchanged(drafted, services, case):
+    _state, draft = _draft(services, drafted)
+    shelter, money = draft.categories
+    target = {
+        "self": shelter.key,
+        "mixed_levels": money.children[0].key,
+        "unknown_target": "00000000",
+        "missing_target": "",
+    }[case]
+
+    response = drafted.post(
+        "/structure/merge",
+        data={"version": 1, "key": shelter.key, "target": target},
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert b'class="flash flash-error"' in response.data
+    state, unchanged = _draft(services, drafted)
+    assert state.version == 1
+    assert unchanged == draft
 
 
 def test_duplicate_names_block_approval(drafted, services):

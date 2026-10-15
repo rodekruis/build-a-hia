@@ -46,9 +46,6 @@ class ContextForm(FlaskForm):
         render_kw={"list": "language-options", "autocomplete": "off"},
     )
     locale_dir = SelectField("Text direction", choices=DIRECTION_CHOICES, default="")
-    source_languages = StringField(
-        "Languages of your sources", validators=[Optional(), Length(max=300)]
-    )
 
     def validate_output_language(self, field: StringField) -> None:
         """Accept a known language name (English or Dutch) or a well-formed language code."""
@@ -151,10 +148,9 @@ class AddNodeForm(VersionForm):
 
 
 class TargetForm(NodeForm):
-    """Submits a node and a target node key to move or merge into, with a confirm flag."""
+    """Submits a node and a target node key to move or merge into."""
 
     target = StringField(validators=[DataRequired(), NODE_KEY])
-    confirm = BooleanField()
 
 
 class BlobForm(FlaskForm):
@@ -201,10 +197,3 @@ class EmptyDecisionForm(BlobForm):
     decision = SelectField(
         choices=[("keep", "Keep it without content"), ("drop", "Leave it out of the export")]
     )
-
-
-class GapForm(FlaskForm):
-    """Submits a gap's suggested action and the page to return to."""
-
-    suggested_action = TextAreaField("Suggested action", validators=[Optional(), Length(max=1000)])
-    back = StringField(validators=[Optional(), NODE_KEY])

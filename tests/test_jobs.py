@@ -342,9 +342,9 @@ def test_worker_embedded_image_ocr_or_warnings_reach_chunks_and_review(
         assert "250 TL" in text
         assert "Text read from image using OCR" in text
         assert image_url in text
-        assert any("OCR may omit or misread" in note for note in source.limitations)
-        assert b"Converted with warnings" in status
-        assert len(gaps) == 1 and gaps[0].kind == "conversion"
+        assert source.limitations == []
+        assert b"Converted with warnings" not in status
+        assert gaps == []
     else:
         assert languages == []
         assert any("Could not read content image" in note for note in source.limitations)

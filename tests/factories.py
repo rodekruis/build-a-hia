@@ -121,7 +121,6 @@ CONTEXT_FORM = {
     "locations": "Dnipro, Kharkiv",
     "output_language": "uk",
     "locale_dir": "",
-    "source_languages": "Ukrainian, English",
 }
 
 

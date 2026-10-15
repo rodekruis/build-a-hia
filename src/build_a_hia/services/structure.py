@@ -291,27 +291,6 @@ def change_parent(structure: Structure, key: str, category_key: str) -> None:
     category.children.append(node)
 
 
-def merge_preview(structure: Structure, source_key: str, target_key: str) -> Node:
-    """Return the target node as it would look after merging the source into it.
-
-    The structure itself is not changed.
-
-    Args:
-        structure: Structure to preview the merge in.
-        source_key: Key of the node that would be merged away.
-        target_key: Key of the node that would remain.
-
-    Returns:
-        A copy of the merged target node.
-
-    Raises:
-        StructureError: If the merge is not allowed; see `merge`.
-    """
-    preview = structure.copy()
-    merge(preview, source_key, target_key)
-    return preview.find(target_key)[1]
-
-
 def merge(structure: Structure, source_key: str, target_key: str) -> None:
     """Merge the source node into the target node and remove the source.
 

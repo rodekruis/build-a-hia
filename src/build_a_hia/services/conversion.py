@@ -76,20 +76,27 @@ HtmlImageFetcher = Callable[[str, int, float], FetchResult]
 
 
 def _html_image_src(tag: "Tag") -> str:
-    for attribute in ("data-src", "src"):
+    for attribute in ("data-src", "data-lazy-src", "src"):
         value = tag.get(attribute)
-        if isinstance(value, str) and value.strip():
+        if (
+            isinstance(value, str)
+            and value.strip()
+            and not value.strip().lower().startswith("data:")
+        ):
             return value.strip()
-    for attribute in ("data-srcset", "srcset"):
+    for attribute in ("data-srcset", "data-lazy-srcset", "srcset"):
         value = tag.get(attribute)
         if isinstance(value, str) and value.strip():
             candidate = value.split(",")[-1].strip().split()
             if candidate:
                 return candidate[0]
-    return ""
+    value = tag.get("src")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _html_is_decorative_image(tag: "Tag") -> bool:
+    if _html_image_src(tag).lower().startswith("data:image/svg+xml"):
+        return True
     if _html_roles(tag) & {"presentation", "none"}:
         return True
     if str(tag.get("aria-hidden", "")).strip().lower() == "true":
@@ -381,7 +388,16 @@ class DoclingConverter:
         validate_ocr_language(ocr_language)
         if source_format == SourceFormat.PDF:
             return self._convert_pdf(path, progress, ocr_language)
-        return self._convert_whole(path, source_format, progress, base_url, ocr_language)
+        output = self._convert_whole(path, source_format, progress, base_url, ocr_language)
+        if source_format in IMAGE_FORMATS and any(
+            _text_tokens(unit.markdown) < MIN_READABLE_TOKENS for unit in output.units
+        ):
+            output.limitations.append(
+                f"Very little text could be read from this image "
+                f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
+                "Check the converted text and selected language."
+            )
+        return output
 
     def prefetch_models(self) -> None:
         """Download and load the PDF and image pipeline models before the first conversion."""
@@ -655,6 +671,8 @@ class DoclingConverter:
                         f"Content image {target.url}: {note}" for note in output.limitations
                     )
                 except SourceError as error:
+                    if error.code == "no_text":
+                        continue
                     if fetched is None and error.code not in {
                         "invalid_url",
                         "blocked_address",
@@ -686,13 +704,6 @@ class DoclingConverter:
                 f"{unread} content image(s) were not read because the page's image count, "
                 "download or processing-time limit was reached. "
                 "Add those images directly as sources or upload copies."
-            )
-        read = sum(bool(text) for text, _url in cached.values())
-        if read:
-            limitations.append(
-                f"Text in {read} content image(s) was read using OCR. "
-                "Compare the images with the converted text before approving this source: "
-                "OCR may omit or misread words, numbers and table entries."
             )
         return soup.encode("utf-8"), limitations
 
@@ -784,15 +795,8 @@ class DoclingConverter:
                 "FAQ answers or other content may be missing. Check the converted text "
                 "against the original page, or upload a complete document."
             )
-        if is_image:
-            if missing:
-                limitations.append("Some image pages contained no readable text.")
-            if any(_text_tokens(unit.markdown) < MIN_READABLE_TOKENS for unit in units):
-                limitations.append(
-                    f"Very little text could be read from this image "
-                    f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
-                    "Check the converted text and selected language."
-                )
+        if is_image and missing:
+            limitations.append("Some image pages contained no readable text.")
         progress(1, 1)
         return ConversionOutput(units=units, limitations=limitations)
 

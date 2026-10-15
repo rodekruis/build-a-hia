@@ -11,7 +11,7 @@ from datetime import date
 from .context import ProjectContext
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-15.3"
+PROMPT_VERSION = "2026-10-15.4"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -242,7 +242,7 @@ def render_sources(sources: list[SourceMaterial]) -> str:
 
 
 def render_context(context: ProjectContext) -> str:
-    """Render the project context with today's date; omit empty optional fields."""
+    """Render the project context with today's date."""
     language = context.language
     language_name = (
         f"{language.name} ({context.output_language})" if language else context.output_language
@@ -256,10 +256,6 @@ def render_context(context: ProjectContext) -> str:
         f"- Output language: {language_name}, text direction {context.locale_dir}",
         f"- Reference date (information should be valid on this date): {date.today().isoformat()}",
     ]
-    optional = [
-        ("Languages of the sources", context.source_languages),
-    ]
-    lines += [f"- {label}: {value}" for label, value in optional if value]
     return "\n".join(lines)
 
 

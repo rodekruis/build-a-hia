@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from build_a_hia.services import conversion
+from build_a_hia.services.chunking import ConvertedUnit
 from build_a_hia.services.conversion import (
     DoclingConverter,
     _export_pages,
@@ -11,7 +12,7 @@ from build_a_hia.services.conversion import (
     describe_pages,
     page_chunks,
 )
-from build_a_hia.services.inspection import SourceError
+from build_a_hia.services.inspection import SourceError, SourceFormat
 
 
 def test_timeout_scales_with_pages_within_bounds():
@@ -182,6 +183,19 @@ def test_readable_text_preserves_unicode_numbers_and_links():
     assert "image" not in text
     assert "https://" not in text
     assert "مرحبا" in text and "112" in text and "Help" in text
+
+
+def test_short_uploaded_images_still_warn_about_sparse_text(monkeypatch, tmp_path):
+    output = conversion.ConversionOutput(units=[ConvertedUnit(page=1, markdown="Short text.")])
+    monkeypatch.setattr(DoclingConverter, "_convert_whole", lambda *_args, **_kwargs: output)
+
+    converted = DoclingConverter().convert(
+        tmp_path / "image.png", SourceFormat.PNG, lambda *_args: None
+    )
+
+    assert any(
+        "Very little text could be read from this image" in note for note in converted.limitations
+    )
 
 
 def test_partial_pdf_result_is_not_silently_accepted(monkeypatch, scripted):

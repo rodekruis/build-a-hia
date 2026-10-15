@@ -26,6 +26,8 @@ def test_context_page_shows_form(client):
     assert b"Describe the situation" in response.data
     assert b'name="reference_date"' not in response.data
     assert b"Reference date" not in response.data
+    assert b'name="source_languages"' not in response.data
+    assert b"Languages of your sources" not in response.data
 
 
 def test_saving_context_creates_session_cookie_and_redirects(client, services):
@@ -43,6 +45,7 @@ def test_saving_context_creates_session_cookie_and_redirects(client, services):
     assert workspace.context.locale_language == "uk"
     assert workspace.context.locale_dir == "ltr"
     assert "reference_date" not in json.loads(workspace.context.to_json())
+    assert "source_languages" not in json.loads(workspace.context.to_json())
 
 
 def test_cookie_token_is_not_stored(client, services):
@@ -110,6 +113,7 @@ def test_context_is_prefilled_on_return(workspace_client):
 
     assert b"Dnipro, Kharkiv" in response.data
     assert b'name="reference_date"' not in response.data
+    assert b'name="source_languages"' not in response.data
 
 
 @pytest.mark.parametrize("reference_date", ["1900-01-01", "not-a-date"])
@@ -138,6 +142,7 @@ def test_contexts_saved_with_removed_fields_still_load():
             "organisation": "Ukrainian Red Cross",
             "notes": "x",
             "reference_date": "1900-01-01",
+            "source_languages": "Ukrainian, English",
         }
     )
 

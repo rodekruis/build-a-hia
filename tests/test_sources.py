@@ -6,6 +6,7 @@ from factories import CONTEXT_FORM, make_docx, make_png, session_key_of, upload
 
 from build_a_hia import create_app
 from build_a_hia.config import TestConfig
+from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import Source, SourceStatus, original_blob
 from build_a_hia.services.storage import StoredEntity
 
@@ -196,6 +197,57 @@ def test_converted_sources_with_limitations_show_warning_badge(
     assert b"Converted with warnings" in response.data
     assert b"badge-warning" in response.data
     assert b"Very little text" in response.data
+
+
+@pytest.mark.parametrize("endpoint", ["/sources", "/sources/status", "detail"])
+@pytest.mark.parametrize("with_real_failure", [False, True])
+def test_stored_routine_web_image_warnings_are_removed_everywhere(
+    workspace_client, services, endpoint, with_real_failure
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/help"})
+    [source] = _sources(services, workspace_client)
+    routine = [
+        "Content image https://example.org/photo.jpg: Very little text could be read "
+        "from this image (under 30 estimated tokens per page). "
+        "Check the converted text and selected language.",
+        "Could not read content image data:image/svg+xml,%3Csvg%3E: Only http and https "
+        "web addresses are supported. Add the image directly as a source or upload a copy.",
+        "Could not read content image https://example.org/photo.jpg: "
+        "No readable text was found in this file. "
+        "Add the image directly as a source or upload a copy.",
+        "Text in 1 content image(s) was read using OCR. Compare the images with the converted "
+        "text before approving this source: "
+        "OCR may omit or misread words, numbers and table entries.",
+    ]
+    genuine = (
+        [
+            "Could not read content image https://example.org/notice.png: The download timed out.",
+            "Content image https://example.org/notice.tiff: "
+            "Part of this file could not be converted.",
+            "2 content image(s) were not read because of the image-count limit.",
+        ]
+        if with_real_failure
+        else []
+    )
+    _mark(
+        services,
+        workspace_client,
+        source.id,
+        format="html",
+        status=SourceStatus.CONVERTED,
+        limitations=routine + genuine,
+    )
+
+    response = workspace_client.get(f"/sources/{source.id}" if endpoint == "detail" else endpoint)
+    assert response.status_code == 200
+    assert (b"Converted with warnings" in response.data) is with_real_failure
+    for fragment in (b"Very little text", b"data:image/svg+xml", b"No readable text", b"Text in 1"):
+        assert fragment not in response.data
+    assert (b"The download timed out." in response.data) is with_real_failure
+    [loaded] = _sources(services, workspace_client)
+    assert loaded.limitations == genuine
+    conversion_gaps = [gap for gap in collect_gaps([], [loaded], {}) if gap.kind == "conversion"]
+    assert len(conversion_gaps) == len(genuine)
 
 
 def test_ocr_language_is_validated_persisted_and_editable_before_retry(

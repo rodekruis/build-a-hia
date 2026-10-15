@@ -43,14 +43,15 @@
     <section class="panel" id="add-url" aria-labelledby="url-title">
       <h2 id="url-title">Add a web page or document link</h2>
       <p class="hint">
-        Only the page or file at this address is fetched; links on it are not followed. Add each
+        Only the page or file at this address and its content images are fetched; links to other
+        pages are not followed. Add each
         page separately. Pages that need JavaScript, a login or bot checks are not supported:
         upload the document or a saved PDF instead.
       </p>
       <form method="post" action="{{ url_for('workspace.add_url') }}" novalidate>
         {{ csrf(url_form) }}
         {{ field(url_form.url) }}
-        {{ field(url_form.ocr_language, "Used if the link points to a scanned PDF or image. OCR does not translate text.") }}
+        {{ field(url_form.ocr_language, "Used for scanned PDFs, images and content images on web pages. OCR does not translate text.") }}
         <div class="actions">
           <button type="submit" class="button">Add address</button>
         </div>

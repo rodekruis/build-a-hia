@@ -9,7 +9,6 @@ from build_a_hia.services.structure import (
     add_subcategory,
     change_parent,
     merge,
-    merge_preview,
     move,
     remove,
     rename,
@@ -86,15 +85,6 @@ def test_change_parent_moves_sub_category_only(structure):
 
 
 def test_merging_categories_combines_children(structure):
-    preview = merge_preview(structure, "bbbbbbbb", "aaaaaaaa")
-
-    assert [child.name for child in preview.children] == [
-        "Night shelter",
-        "Rent support",
-        "Doctors",
-    ]
-    assert len(structure.categories) == 2
-
     merge(structure, "bbbbbbbb", "aaaaaaaa")
     assert _names(structure) == [("Shelter", ["Night shelter", "Rent support", "Doctors"])]
 

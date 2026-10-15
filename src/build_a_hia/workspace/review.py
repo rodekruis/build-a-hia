@@ -26,7 +26,6 @@ from .forms import (
     ActionForm,
     BlobForm,
     EmptyDecisionForm,
-    GapForm,
     OfferForm,
     QuestionForm,
 )
@@ -209,13 +208,19 @@ def _review(
         flash(error.message, "error")
         return _to_content(key, "approval")
     flash("Content approved." if empty_decision != "drop" else "Sub-category left out.", "success")
-    return redirect(url_for("review.overview"))
+    plan = hia.exports.plan(workspace)
+    anchor = (
+        "review-actions"
+        if plan.subcategories and all(sub.approved for sub in plan.subcategories)
+        else "review-title"
+    )
+    return redirect(url_for("review.overview", _anchor=anchor))
 
 
 @review_bp.post("/content/<key>/approve")
 @require_workspace
 def approve_content(key: str):
-    """Approve current content; redirect to the review."""
+    """Approve current content; return to the list, or its final action when all are reviewed."""
     return _review(key, BlobForm())
 
 
@@ -227,63 +232,17 @@ def decide_empty(key: str):
     return _review(key, form, empty_decision=form.decision.data or "keep")
 
 
-@review_bp.post("/gaps/<gap_id>")
-@require_workspace
-def update_gap(gap_id: str):
-    """Update a gap's suggested action; 404 for gaps not in this session's plan.
-
-    Redirects back to the sub-category page when a valid node key is given, else to the review.
-    """
-    _check(_REF, gap_id)
-    workspace = _workspace()
-    form = GapForm()
-    autosave = request.accept_mimetypes.best == "application/json"
-    back = form.back.data if _NODE_KEY.match(form.back.data or "") else ""
-    target = (
-        _to_content(back, "gaps") if back else redirect(url_for("review.overview", _anchor="gaps"))
-    )
-    if not form.validate_on_submit():
-        if autosave:
-            return jsonify(saved=False, message="Check the suggested action and try again."), 400
-        flash("Check the form and try again.", "error")
-        return target
-    hia = services()
-    gap = next((gap for gap in hia.exports.plan(workspace).gaps if gap.id == gap_id), None)
-    if gap is None:
-        abort(404)
-    try:
-        hia.gaps.update(
-            workspace.key,
-            gap_id,
-            status=gap.status,
-            action=form.suggested_action.data or "",
-            contact="",
-        )
-    except ReviewError as error:
-        if autosave:
-            return jsonify(saved=False, message=error.message), 400
-        flash(error.message, "error")
-    else:
-        if autosave:
-            return jsonify(saved=True)
-        flash("Gap updated.", "success")
-    return target
-
-
 @review_bp.get("/review")
 @require_workspace
 def overview():
-    """Show the review overview: sub-categories to approve and one list of gaps.
-
-    Items that still need attention come first; the export keeps the structure's order.
-    """
+    """Show sub-categories in structure order and one list of gaps."""
     workspace = _workspace()
     plan = services().exports.plan(workspace)
     return render_template(
         "review/review.html",
         workspace=workspace,
         plan=plan,
-        subcategories=sorted(plan.subcategories, key=lambda sub: sub.approved),
+        subcategories=plan.subcategories,
         reviewed=sum(sub.approved for sub in plan.subcategories),
         gaps=sorted(plan.gaps, key=lambda gap: gap.status != "open"),
     )

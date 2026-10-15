@@ -123,7 +123,6 @@ def context():
                 "locations": existing.locations,
                 "output_language": language_label(existing.output_language),
                 "locale_dir": existing.locale_dir,
-                "source_languages": existing.source_languages,
             }
         )
     else:
@@ -138,7 +137,6 @@ def context():
             "locations": (form.locations.data or "").strip(),
             "output_language": language,
             "locale_dir": form.locale_dir.data or default_direction(language),
-            "source_languages": (form.source_languages.data or "").strip(),
         }
         new_context = replace(existing, **values) if existing else ProjectContext(**values)
         hia = services()

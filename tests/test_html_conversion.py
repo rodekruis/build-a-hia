@@ -474,7 +474,7 @@ def test_embedded_image_size_policy_uses_actual_pixels(embedded_ocr, size, read)
     )
     assert bool(embedded_ocr.ocr) is read
     assert ("250 TL" in output.units[0].markdown) is read
-    assert any("OCR may omit or misread" in note for note in output.limitations) is read
+    assert output.limitations == []
 
 
 def test_decorative_images_and_site_chrome_are_not_downloaded(embedded_ocr):
@@ -522,14 +522,51 @@ def test_unreadable_content_images_keep_native_text_with_warnings(embedded_ocr, 
     assert embedded_ocr.ocr == []
 
 
-def test_ocr_failure_is_explicit_and_temporary_images_are_cleaned(embedded_ocr, tmp_path):
+def test_photos_without_text_do_not_warn_and_temporary_images_are_cleaned(embedded_ocr, tmp_path):
     embedded_ocr.error = SourceError("no_text", "No readable text was found in this image.")
     output = embedded_ocr.run('<main><p>Native information.</p><img src="amounts.png"></main>')
 
-    assert any("No readable text" in note for note in output.limitations)
+    assert output.limitations == []
     assert not list(tmp_path.glob("hia-image-*"))
-    with pytest.raises(SourceError, match="content images could not be read"):
+    with pytest.raises(SourceError, match="little or no readable text"):
         embedded_ocr.run('<main><img src="amounts.png"></main>')
+
+
+def test_inline_svg_placeholders_do_not_warn_or_consume_image_budget(embedded_ocr):
+    placeholders = '<img src="data:image/svg+xml,%3Csvg%20viewBox=0%200%201024%20681%3E">' * 20
+    output = embedded_ocr.run(f"<main><p>Native information.</p>{placeholders}</main>")
+
+    assert embedded_ocr.fetches == []
+    assert embedded_ocr.ocr == []
+    assert output.limitations == []
+    assert "Native information." in output.units[0].markdown
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ['data-lazy-src="amounts.png"', 'data-lazy-srcset="small.png 1x, amounts.png 2x"'],
+)
+def test_lazy_raster_images_are_read_instead_of_their_svg_placeholder(embedded_ocr, attribute):
+    output = embedded_ocr.run(f'<main><img src="data:image/svg+xml,%3Csvg%3E" {attribute}></main>')
+
+    assert embedded_ocr.fetches[0][0] == "https://example.org/program/amounts.png"
+    assert "250 TL" in output.units[0].markdown
+    assert output.limitations == []
+
+
+def test_short_successful_web_image_ocr_does_not_add_routine_warnings(embedded_ocr):
+    embedded_ocr.text = "Short caption."
+    output = embedded_ocr.run('<main><img src="photo.jpg"></main>')
+
+    assert "Short caption." in output.units[0].markdown
+    assert output.limitations == []
+
+
+def test_real_partial_image_conversion_still_warns(embedded_ocr):
+    embedded_ocr.limitations = ["Part of this file could not be converted."]
+    output = embedded_ocr.run('<main><img src="amounts.png"></main>')
+
+    assert any("Part of this file could not be converted" in note for note in output.limitations)
 
 
 def test_image_ocr_text_is_inserted_as_data_not_html(embedded_ocr):

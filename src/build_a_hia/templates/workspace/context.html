@@ -16,14 +16,13 @@
       {{ field(form.locations, "Regions, cities or sites the information should cover.") }}
       <div class="field-row">
         {{ field(form.output_language, "Type a language name in English or Dutch, or a language code such as “am” or “pt-BR”. Sets HIA's #locale.language.") }}
-        {{ field(form.locale_dir, "Sets #locale.dir. Right to left is used by default for Arabic, Farsi, Pashto, Urdu and similar languages.") }}
+        {{ field(form.locale_dir, "Right to left is used by default for Arabic, Farsi, Pashto, Urdu and similar languages. Sets HIA's #locale.dir.") }}
       </div>
       <datalist id="language-options">
         {% for language in languages | sort(attribute="name") %}
           <option value="{{ language.name }}">{{ language.dutch }} · {{ language.code }}</option>
         {% endfor %}
       </datalist>
-      {{ field(form.source_languages, "For example: Ukrainian, English.") }}
       <div class="actions">
         <button type="submit" class="button">{{ "Save and continue" if workspace and workspace.context else "Start session" }}</button>
       </div>

@@ -16,12 +16,10 @@ from ..services.sessions import WorkspaceSession
 from ..services.storage import ConflictError
 from ..services.structure import (
     Structure,
-    StructureError,
     add_category,
     add_subcategory,
     change_parent,
     merge,
-    merge_preview,
     move,
     remove,
     rename,
@@ -211,35 +209,12 @@ def move_to():
 @drafting_bp.post("/structure/merge")
 @require_workspace
 def merge_nodes():
-    """Show a merge preview, or merge two nodes once the user has confirmed.
-
-    Both the preview and the merge reject a structure version that is no longer current.
-    """
-    workspace = _workspace()
+    """Merge two nodes immediately; stale structure versions are rejected."""
     form = TargetForm()
-    if not form.validate_on_submit():
-        flash("Choose what to merge.", "error")
-        return _to_structure()
-    source_key = form.key.data or ""
-    target_key = form.target.data or ""
-    if form.confirm.data:
-        return _edit(form, lambda structure: merge(structure, source_key, target_key), "Merged.")
-    state, draft = services().structures.draft(workspace.key)
-    if draft is None or state.version != form.version.data:
-        flash("The structure changed in the meantime. Review it and try again.", "error")
-        return _to_structure()
-    try:
-        source = draft.find(source_key)[1]
-        result = merge_preview(draft, source_key, target_key)
-    except StructureError as error:
-        flash(error.message, "error")
-        return _to_structure()
-    return render_template(
-        "drafting/merge.html",
-        source=source,
-        result=result,
-        version=state.version,
-        target_key=target_key,
+    return _edit(
+        form,
+        lambda structure: merge(structure, form.key.data or "", form.target.data or ""),
+        "Merged.",
     )
 
 

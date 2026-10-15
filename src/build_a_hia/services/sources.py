@@ -77,6 +77,21 @@ def clean_title(value: str) -> str:
     return " ".join(printable.split())[:MAX_TITLE_LENGTH]
 
 
+def _routine_web_image_warning(note: str) -> bool:
+    """Recognize obsolete routine OCR notes in sources converted by older workers."""
+    if note.startswith("Content image "):
+        return ": Very little text could be read from this image " in note
+    if note.startswith("Could not read content image "):
+        return note.startswith("Could not read content image data:image/svg+xml,") or any(
+            message in note
+            for message in (
+                ": No readable text was found in this file.",
+                ": No readable text was found in this image.",
+            )
+        )
+    return note.startswith("Text in ") and " content image(s) was read using OCR." in note
+
+
 @dataclass
 class Source:
     """A document added to a session, with its processing state and metadata.
@@ -181,6 +196,9 @@ class Source:
     def from_stored(cls, source_id: str, stored: StoredEntity) -> "Source":
         """Build a source from its ID and stored table entity."""
         data = stored.data
+        limitations: list[str] = json.loads(data.get("limitations") or "[]")
+        if data.get("format") == "html":
+            limitations = [note for note in limitations if not _routine_web_image_warning(note)]
         return cls(
             id=source_id,
             number=int(data["number"]),
@@ -202,7 +220,7 @@ class Source:
             token_count=int(data.get("token_count", 0)),
             error_code=data.get("error_code", ""),
             error_message=data.get("error_message", ""),
-            limitations=json.loads(data.get("limitations") or "[]"),
+            limitations=limitations,
             ocr_language=data.get("ocr_language", "en"),
             version=int(data.get("version", 1)),
             etag=stored.etag,
