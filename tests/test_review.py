@@ -1,5 +1,8 @@
+from datetime import date, timedelta
+
 import pytest
 
+from build_a_hia.services import review as review_module
 from build_a_hia.services.assembly import assemble
 from build_a_hia.services.content import (
     Evidence,
@@ -395,7 +398,14 @@ def test_original_age_warning_review_notes_survive_summarisation(content):
     assert gaps[0].suggested_action == "Confirmed with service\nContact: Desk"
 
 
-def test_no_reference_date_uses_draft_date_for_source_age(content):
+@pytest.mark.parametrize("age", [364, 365, 366])
+def test_no_reference_date_uses_today_for_source_age(content, monkeypatch, age):
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 15)
+
+    monkeypatch.setattr(review_module, "date", Today)
     source = Source(
         id="x",
         number=1,
@@ -403,7 +413,8 @@ def test_no_reference_date_uses_draft_date_for_source_age(content):
         title="Guide",
         status=SourceStatus.CONVERTED,
         created_at="",
-        document_date="2026-07-01",
+        document_date=(Today.today() - timedelta(days=age)).isoformat(),
     )
     content.issues = [Issue(id="age", kind="outdated", description="Old.", evidence=[EVIDENCE])]
-    assert collect_gaps(_gap_categories(content), [source], {}) == []
+    gaps = collect_gaps(_gap_categories(content), [source], {})
+    assert [gap.kind for gap in gaps] == (["outdated"] if age > 365 else [])

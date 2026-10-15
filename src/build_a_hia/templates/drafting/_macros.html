@@ -12,7 +12,7 @@
 {%- endmacro %}
 
 {% macro rename_form(node, version) -%}
-  <form method="post" action="{{ url_for('drafting.rename_node') }}">
+  <form id="form-drafting-rename_node-{{ node.key }}" method="post" action="{{ url_for('drafting.rename_node') }}">
     {{ hidden(version, node.key) }}
     <div class="field">
       <label for="name-{{ node.key }}">Name</label>
@@ -22,13 +22,12 @@
       <label for="description-{{ node.key }}">Description</label>
       <textarea id="description-{{ node.key }}" name="description" maxlength="1000">{{ node.description }}</textarea>
     </div>
-    <button type="submit" class="button secondary">Save</button>
   </form>
 {%- endmacro %}
 
 {% macro target_form(endpoint, node, version, label, options, button) -%}
   {% if options %}
-    <form method="post" action="{{ url_for(endpoint) }}" class="inline-form">
+    <form id="form-{{ endpoint | replace('.', '-') }}-{{ node.key }}" method="post" action="{{ url_for(endpoint) }}" class="inline-form tree-target-form">
       {{ hidden(version, node.key) }}
       <label for="{{ endpoint | replace('.', '-') }}-{{ node.key }}">{{ label }}</label>
       <select id="{{ endpoint | replace('.', '-') }}-{{ node.key }}" name="target">
@@ -37,6 +36,10 @@
       <button type="submit" class="button secondary">{{ button }}</button>
     </form>
   {% endif %}
+{%- endmacro %}
+
+{% macro form_button(endpoint, node, label) -%}
+  <button type="submit" class="button secondary" form="form-{{ endpoint | replace('.', '-') }}-{{ node.key }}">{{ label }}</button>
 {%- endmacro %}
 
 {% macro evidence_list(evidence) -%}

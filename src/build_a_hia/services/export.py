@@ -214,7 +214,6 @@ class ExportService:
                 categories,
                 sources,
                 self._gaps.overrides(session.key),
-                reference_date=session.context.reference_date if session.context else "",
             ),
             sources=sources,
         )

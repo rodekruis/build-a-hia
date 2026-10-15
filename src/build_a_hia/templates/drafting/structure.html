@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% from "workspace/_macros.html" import steps %}
-{% from "drafting/_macros.html" import hidden, node_button, rename_form, target_form %}
+{% from "drafting/_macros.html" import hidden, node_button, rename_form, target_form, form_button %}
 
 {% block title %}Structure | Build a HIA{% endblock %}
 
@@ -8,7 +8,7 @@
   <div class="workspace">
     <section class="panel" aria-labelledby="structure-title">
       {{ steps(3) }}
-      <h1 id="structure-title">Review the structure</h1>
+      <h1 id="structure-title">Generate and review the structure</h1>
       <p class="lead">
         The AI proposes categories and sub-categories from all approved sources. Rename, reorder,
         move, merge, add or remove items until the structure fits, then approve it.
@@ -57,13 +57,15 @@
               {% if category.description %}<p class="meta">{{ category.description }}</p>{% endif %}
               <details class="tree-edit">
                 <summary>Edit category</summary>
+                {% set merge_targets = category_options | rejectattr('0', 'equalto', category.key) | list %}
                 {{ rename_form(category, state.version) }}
                 <div class="source-actions">
+                  {{ form_button('drafting.rename_node', category, 'Save') }}
                   {% if not loop.first %}{{ node_button('drafting.move_node', 'Move up', state.version, category.key, {'direction': 'up'}) }}{% endif %}
                   {% if not loop.last %}{{ node_button('drafting.move_node', 'Move down', state.version, category.key, {'direction': 'down'}) }}{% endif %}
                   {{ node_button('drafting.remove_node', 'Remove with its sub-categories', state.version, category.key) }}
                 </div>
-                {{ target_form('drafting.merge_nodes', category, state.version, 'Merge into', category_options | rejectattr('0', 'equalto', category.key) | list, 'Preview merge') }}
+                {{ target_form('drafting.merge_nodes', category, state.version, 'Merge into', merge_targets, 'Merge') }}
               </details>
 
               <ol class="tree-children">
@@ -74,14 +76,17 @@
                     {% if sub.description %}<p class="meta">{{ sub.description }}</p>{% endif %}
                     <details class="tree-edit">
                       <summary>Edit sub-category</summary>
+                      {% set move_targets = category_options | rejectattr('0', 'equalto', category.key) | list %}
+                      {% set merge_targets = sub_options | rejectattr('0', 'equalto', sub.key) | list %}
                       {{ rename_form(sub, state.version) }}
                       <div class="source-actions">
+                        {{ form_button('drafting.rename_node', sub, 'Save') }}
                         {% if not loop.first %}{{ node_button('drafting.move_node', 'Move up', state.version, sub.key, {'direction': 'up'}) }}{% endif %}
                         {% if not loop.last %}{{ node_button('drafting.move_node', 'Move down', state.version, sub.key, {'direction': 'down'}) }}{% endif %}
                         {{ node_button('drafting.remove_node', 'Remove', state.version, sub.key) }}
                       </div>
-                      {{ target_form('drafting.move_to', sub, state.version, 'Move to category', category_options | rejectattr('0', 'equalto', category.key) | list, 'Move') }}
-                      {{ target_form('drafting.merge_nodes', sub, state.version, 'Merge into', sub_options | rejectattr('0', 'equalto', sub.key) | list, 'Preview merge') }}
+                      {{ target_form('drafting.move_to', sub, state.version, 'Move to category', move_targets, 'Move') }}
+                      {{ target_form('drafting.merge_nodes', sub, state.version, 'Merge into', merge_targets, 'Merge') }}
                     </details>
                   </li>
                 {% endfor %}

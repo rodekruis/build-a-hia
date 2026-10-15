@@ -21,7 +21,7 @@ from .services.generation import GenerationProcessor
 from .services.jobs import ConversionProcessor
 from .services.model import FoundryModelClient
 from .services.settings import Settings
-from .services.url_fetch import FetchResult, SafeFetcher
+from .services.url_fetch import SafeFetcher
 
 logger = logging.getLogger("build_a_hia.worker")
 
@@ -39,21 +39,13 @@ def _run(process_next: Callable[[], bool], *, loop: bool, poll_seconds: float) -
 
 def _convert(settings: Settings, *, loop: bool, poll_seconds: float) -> int:
     services = build_services(settings)
-
-    def fetch_image(url: str, max_bytes: int, timeout: float) -> FetchResult:
-        return SafeFetcher(
-            max_bytes=min(max_bytes, settings.max_url_bytes),
-            max_redirects=settings.max_redirects,
-            timeout_seconds=min(timeout, settings.url_timeout_seconds),
-        ).fetch(url)
-
     processor = ConversionProcessor(
         table=services.table,
         blobs=services.blobs,
         queue=services.storage.convert_queue,
         sessions=services.sessions,
         settings=settings,
-        converter=DoclingConverter(image_fetcher=fetch_image),
+        converter=DoclingConverter(),
         fetcher=SafeFetcher(
             max_bytes=settings.max_url_bytes,
             max_redirects=settings.max_redirects,

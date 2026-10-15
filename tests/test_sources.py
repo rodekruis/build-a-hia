@@ -6,6 +6,7 @@ from factories import CONTEXT_FORM, make_docx, make_png, session_key_of, upload
 
 from build_a_hia import create_app
 from build_a_hia.config import TestConfig
+from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import Source, SourceStatus, original_blob
 from build_a_hia.services.storage import StoredEntity
 
@@ -198,6 +199,67 @@ def test_converted_sources_with_limitations_show_warning_badge(
     assert b"Very little text" in response.data
 
 
+@pytest.mark.parametrize("endpoint", ["/sources", "/sources/status", "detail"])
+@pytest.mark.parametrize("with_other_warning", [False, True])
+def test_stored_web_image_ocr_warnings_are_removed_everywhere(
+    workspace_client, services, endpoint, with_other_warning
+):
+    workspace_client.post("/sources/url", data={"url": "https://example.org/help"})
+    [source] = _sources(services, workspace_client)
+    retired = [
+        "Content image https://example.org/photo.jpg: Very little text could be read "
+        "from this image (under 30 estimated tokens per page). "
+        "Check the converted text and selected language.",
+        "Content image https://example.org/notice.tiff: Part of this file could not be converted.",
+        "Could not read content image data:image/svg+xml,%3Csvg%3E: Only http and https "
+        "web addresses are supported. Add the image directly as a source or upload a copy.",
+        "Could not read content image https://example.org/notice.png: The download timed out. "
+        "Add the image directly as a source or upload a copy.",
+        "Could not read a content image because its address is invalid. "
+        "Upload the image as a separate source.",
+        "Text in 1 content image(s) was read using OCR. Compare the images with the converted "
+        "text before approving this source: "
+        "OCR may omit or misread words, numbers and table entries.",
+        "2 content image(s) were not read because the page's image count, "
+        "download or processing-time limit was reached. "
+        "Add those images directly as sources or upload copies.",
+    ]
+    other = (
+        [
+            "This page contains many headings but very little body text. "
+            "FAQ answers or other content may be missing."
+        ]
+        if with_other_warning
+        else []
+    )
+    _mark(
+        services,
+        workspace_client,
+        source.id,
+        format="html",
+        status=SourceStatus.CONVERTED,
+        limitations=retired + other,
+    )
+
+    response = workspace_client.get(f"/sources/{source.id}" if endpoint == "detail" else endpoint)
+    assert response.status_code == 200
+    assert (b"Converted with warnings" in response.data) is with_other_warning
+    for fragment in (b"content image", b"Content image", b"data:image/svg+xml", b"Text in 1"):
+        assert fragment not in response.data
+    assert (b"very little body text" in response.data) is with_other_warning
+    [loaded] = _sources(services, workspace_client)
+    assert loaded.limitations == other
+    conversion_gaps = [gap for gap in collect_gaps([], [loaded], {}) if gap.kind == "conversion"]
+    assert len(conversion_gaps) == len(other)
+
+
+def test_sources_page_warns_that_web_page_images_are_not_read(workspace_client):
+    response = workspace_client.get("/sources")
+
+    assert b"Text inside images on web pages" in response.data
+    assert b"add the image address as a" in response.data
+
+
 def test_ocr_language_is_validated_persisted_and_editable_before_retry(
     workspace_client, services, pdf_bytes
 ):
@@ -254,6 +316,26 @@ def test_ocr_language_is_validated_persisted_and_editable_before_retry(
     )
     assert response.status_code == 302
     assert _sources(services, workspace_client)[1].ocr_language == "ar"
+
+
+@pytest.mark.parametrize("status", [SourceStatus.CONVERTED, SourceStatus.FAILED])
+def test_web_page_details_hide_the_unused_scanned_text_language(workspace_client, services, status):
+    workspace_client.post(
+        "/sources/url", data={"url": "https://example.org/help", "ocr_language": "ar"}
+    )
+    [source] = _sources(services, workspace_client)
+    _mark(services, workspace_client, source.id, format="html", status=status)
+
+    page = workspace_client.get(f"/sources/{source.id}").data
+    assert b"Source language:" not in page
+    assert b"Language of source" not in page
+    response = workspace_client.post(
+        f"/sources/{source.id}", data={"title": "Help page", "ocr_language": "ar"}
+    )
+    assert response.status_code == 302
+    [saved] = _sources(services, workspace_client)
+    assert saved.title == "Help page"
+    assert saved.ocr_language == "ar"
 
 
 def test_legacy_sources_without_ocr_language_remain_loadable(workspace_client, services, pdf_bytes):

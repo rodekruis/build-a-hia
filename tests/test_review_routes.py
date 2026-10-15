@@ -1,6 +1,8 @@
 import io
+from datetime import date, timedelta
 
 import pytest
+from bs4 import BeautifulSoup
 from factories import (
     DRAFT_FOR_ROUTES,
     PROPOSAL,
@@ -116,7 +118,9 @@ def test_pages_do_not_describe_generated_content_as_hidden(generated, services):
     assert b"Hidden rows" not in download_page.data
     assert b"hidden scaffolding row" not in download_page.data
     assert b"copy rows 2 and below" in download_page.data
-    assert b"Review everything for public disclosure" in download_page.data
+    assert b"Paste special" in download_page.data
+    assert b"Values only" in download_page.data
+    assert b"column B" in download_page.data
 
 
 def test_reviewer_edits_are_flagged_and_withdraw_approval(generated, services):
@@ -223,7 +227,10 @@ def test_content_page_puts_gaps_after_content_and_approve_next_to_regenerate(gen
     assert "Edit question" not in page
     assert "Save offer" not in page
     assert "Save question" not in page
-    assert "Remove offer" in page
+    for label in ("Add offer", "Remove offer"):
+        assert f'class="button secondary">{label}</button>' in page
+    offer_card = page.split('class="offer"', 1)[1].split("</article>", 1)[0]
+    assert 'class="content-remove"' in offer_card
     assert "Remove question" in page
     assert 'name="phone_numbers"' in page
     assert 'name="answer"' in page
@@ -250,18 +257,30 @@ def test_questions_can_be_added_and_nested(generated, services):
         ("How long?", "q1"),
     ]
     page = client.get(f"/content/{night}").data.decode()
-    assert 'class="question depth-1"' in page
+    assert 'class="question sub-question"' in page
     assert 'id="add-sub-question-q1"' in page
     assert f'id="add-sub-question-{content.questions[1].ref}"' not in page
-    parent_card = page.split('id="question-q1"', 1)[1].split("</article>", 1)[0]
-    child_card = page.split(f'id="question-{content.questions[1].ref}"', 1)[1].split(
-        "</article>", 1
-    )[0]
-    assert ">Remove question</button>" in parent_card
-    assert ">Remove sub-question</button>" in child_card
-    assert 'type="hidden" name="parent" value=""' in parent_card
-    assert 'type="hidden" name="parent" value="q1"' in child_card
-    assert "<select" not in parent_card + child_card
+    document = BeautifulSoup(page, "html.parser")
+    parent_card = document.find("article", id="question-q1")
+    child_card = document.find("article", id=f"question-{content.questions[1].ref}")
+    assert parent_card is not None and child_card is not None
+    assert child_card.find_parent("article") is parent_card
+    assert len(document.select("#questions > article.question")) == 1
+    assert len(document.select("article.sub-question")) == 1
+    assert not document.select("form form")
+    for card, label in ((parent_card, "Remove question"), (child_card, "Remove sub-question")):
+        remove_form = card.find("form", class_="content-remove", recursive=False)
+        assert remove_form is not None
+        button = remove_form.find("button", class_="secondary")
+        assert button is not None and button.get_text(strip=True) == label
+    for card, parent in ((parent_card, ""), (child_card, "q1")):
+        edit_form = card.find("form", attrs={"data-content-autosave": True}, recursive=False)
+        assert edit_form is not None
+        parent_field = edit_form.find("input", attrs={"name": "parent"})
+        assert parent_field is not None and parent_field["value"] == parent
+    for label in ("Add question", "Add sub-question"):
+        assert f'class="button secondary">{label}</button>' in page
+    assert not parent_card.select("select")
 
     response = client.post(
         f"/content/{night}/questions/{content.questions[1].ref}",
@@ -295,7 +314,49 @@ def test_questions_can_be_added_and_nested(generated, services):
     assert services.contents.result(key, _state(services, key, night)) == updated
 
 
-def test_gap_action_can_be_updated_without_status_or_contact(generated, services):
+@pytest.mark.parametrize("editable", [True, False])
+def test_subquestions_render_once_inside_their_own_parent(
+    generated, services, monkeypatch, editable
+):
+    client, key, night, _cash = generated
+
+    def add(text, parent):
+        response = client.post(
+            f"/content/{night}/questions/new",
+            data={
+                "blob": _state(services, key, night).blob,
+                "question": text,
+                "answer": f"Answer to {text}",
+                "parent": parent,
+            },
+        )
+        assert response.status_code == 302
+        return services.contents.result(key, _state(services, key, night)).questions[-1].ref
+
+    other_parent = add("Where is the shelter?", "")
+    children = {
+        "q1": add("How long can I stay?", "q1"),
+        other_parent: add("What are the opening hours?", other_parent),
+    }
+    if not editable:
+        monkeypatch.setattr(
+            "build_a_hia.workspace.drafting._content_status", lambda *_args: "outdated"
+        )
+    document = BeautifulSoup(client.get(f"/content/{night}").data, "html.parser")
+    assert len(document.select("#questions > article.question")) == 2
+    assert len(document.select("article.sub-question")) == 2
+    assert not document.select("form form")
+    for parent_ref, child_ref in children.items():
+        parent = document.find("article", id=f"question-{parent_ref}")
+        child = document.find("article", id=f"question-{child_ref}")
+        assert parent is not None and child is not None
+        assert child.find_parent("article") is parent
+        assert len(parent.find_all("article", recursive=False)) == 1
+        assert len(document.find_all(id=f"question-{child_ref}")) == 1
+        assert (child.find("form", attrs={"data-content-autosave": True}) is not None) is editable
+
+
+def test_gap_suggested_actions_are_read_only_on_overview_and_content(generated, services):
     client, key, night, _cash = generated
     gap = next(
         g
@@ -315,41 +376,19 @@ def test_gap_action_can_be_updated_without_status_or_contact(generated, services
         assert 'name="status"' not in card
         assert "badge" not in card
         assert "<details" not in card
-        assert "data-gap-autosave" in card
-        assert 'type="submit"' not in card
-        assert "data-save-status" in card
+        assert "<form" not in card
+        assert "<textarea" not in card
+        assert "<input" not in card
+        assert "data-gap-autosave" not in card
+        assert "data-save-status" not in card
+        assert '<p class="gap-action">' in card
         assert card.index(gap.issue) < card.index("Suggested action")
         if "Sources:" in card:
             assert card.index("Suggested action") < card.index("Sources:")
 
-    client.post(
-        f"/gaps/{gap.id}",
-        data={
-            "suggested_action": "Ask the program team at the desk",
-            "back": night,
-        },
-    )
 
-    updated = next(
-        g for g in services.exports.plan(services.sessions.get_active(key)).gaps if g.id == gap.id
-    )
-    assert (updated.status, updated.suggested_action) == (
-        "resolved",
-        "Ask the program team at the desk",
-    )
-    assert updated.suggested_contact == ""
-    assert (
-        client.post("/gaps/unknown-gap", data={"suggested_action": "Ask the team"}).status_code
-        == 404
-    )
-
-
-@pytest.mark.parametrize(
-    "action, expected_status", [("Ask the program team", 200), ("", 200), ("x" * 1001, 400)]
-)
-def test_gap_autosave_returns_json_and_validates_input(
-    generated, services, action, expected_status
-):
+@pytest.mark.parametrize("accept", ["text/html", "application/json"])
+def test_suggested_action_updates_are_not_available(generated, services, accept):
     client, key, night, _cash = generated
     gap = next(
         gap
@@ -357,26 +396,16 @@ def test_gap_autosave_returns_json_and_validates_input(
         if gap.subcategory_key == night
     )
     services.gaps.update(key, gap.id, status="open", action="Previous action", contact="")
-    client.get("/review")
+    before = services.gaps.overrides(key)
 
     response = client.post(
         f"/gaps/{gap.id}",
-        data={"suggested_action": action, "back": night},
-        headers={"Accept": "application/json"},
+        data={"suggested_action": "Changed action", "back": night},
+        headers={"Accept": accept},
     )
 
-    assert response.status_code == expected_status
-    assert response.json["saved"] is (expected_status == 200)
-    stored = services.gaps.overrides(key)[gap.id]
-    assert stored["action"] == (action if expected_status == 200 else "Previous action")
-    updated = next(
-        candidate
-        for candidate in services.exports.plan(services.sessions.get_active(key)).gaps
-        if candidate.id == gap.id
-    )
-    assert updated.suggested_action == stored["action"]
-    with client.session_transaction() as session:
-        assert not session.get("_flashes")
+    assert response.status_code == 404
+    assert services.gaps.overrides(key) == before
 
 
 def test_review_overview_lists_all_gaps_in_one_section(generated, services):
@@ -390,16 +419,10 @@ def test_review_overview_lists_all_gaps_in_one_section(generated, services):
     gaps = page[page.index('id="gaps"') :]
     assert "Night shelter ›" in gaps
     assert "Cash assistance ›" in gaps
-    assert 'name="back" value=""' in gaps
-
-    gap = services.exports.plan(services.sessions.get_active(key)).gaps[0]
-    response = client.post(
-        f"/gaps/{gap.id}", data={"suggested_action": "Ask the program team", "back": ""}
-    )
-    assert response.headers["Location"].endswith("/review#gaps")
+    assert 'name="suggested_action"' not in gaps
 
 
-def test_review_overview_lists_unreviewed_first(generated, services):
+def test_review_overview_preserves_structure_order_after_approval(generated, services):
     client, key, night, _cash = generated
     page = client.get("/review").data
     assert page.index(b"Night shelter") < page.index(b"Cash assistance")
@@ -411,8 +434,39 @@ def test_review_overview_lists_unreviewed_first(generated, services):
     )
 
     page = client.get("/review").data
-    assert page.index(b"Cash assistance") < page.index(b"Night shelter")
+    assert page.index(b"Night shelter") < page.index(b"Cash assistance")
     assert b"1 of 2 reviewed" in page
+
+
+@pytest.mark.parametrize("empty_first", [False, True])
+@pytest.mark.parametrize("decision", ["keep", "drop"])
+def test_approval_scrolls_to_download_only_after_the_last_pending_review(
+    generated, services, empty_first, decision
+):
+    client, key, night, cash = generated
+    submissions = [
+        (f"/content/{night}/approve", {"blob": _state(services, key, night).blob}),
+        (
+            f"/content/{cash}/empty",
+            {"blob": _state(services, key, cash).blob, "decision": decision},
+        ),
+    ]
+    if empty_first:
+        submissions.reverse()
+    for (endpoint, data), anchor in zip(
+        submissions, ("review-title", "review-actions"), strict=True
+    ):
+        response = client.post(endpoint, data=data)
+        assert response.status_code == 302
+        assert response.headers["Location"] == f"/review#{anchor}"
+        page = BeautifulSoup(client.get("/review").data, "html.parser")
+        assert page.find(id=anchor) is not None
+        subcategory_links = page.select('section[aria-labelledby="review-title"] .source-title')
+        assert [link.get_text(strip=True) for link in subcategory_links] == [
+            "Night shelter",
+            "Cash assistance",
+        ]
+    assert b"2 of 2 reviewed" in client.get("/review").data
 
 
 def test_download_is_blocked_until_everything_is_reviewed(generated):
@@ -746,7 +800,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     recent = services.sources.repository.list_for(key)[0]
 
     def set_date(source):
-        source.document_date = "2025-10-02"
+        source.document_date = (date.today() - timedelta(days=364)).isoformat()
         source.document_date_origin = "user"
         return True
 
@@ -755,7 +809,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     old = add_converted_source(services, key, ["Old service guidance."], "Old guide")
 
     def set_old_date(source):
-        source.document_date = "2024-07-01"
+        source.document_date = (date.today() - timedelta(days=366)).isoformat()
         source.document_date_origin = "user"
         return True
 
@@ -815,13 +869,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     assert "Optional field not given" not in overview
     assert f"src-{recent.id}-date" not in overview
     date_gap = f"src-{undated.id}-date"
-    client.post(
-        f"/gaps/{date_gap}",
-        data={
-            "suggested_action": "Checked with service\nContact: Service desk",
-            "back": "",
-        },
-    )
+    expected_action = next(gap.suggested_action for gap in plan.gaps if gap.id == date_gap)
     for sub in plan.subcategories:
         page = client.get(f"/content/{sub.key}").data.decode()
         assert "Eligibility differs" in page
@@ -841,7 +889,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     rows = list(workbook["Gaps"].iter_rows(min_row=3, values_only=True))
     assert len(rows) == 4
     unknown_date = next(row for row in rows if row[5] == "Source date unknown")
-    assert unknown_date[-3:] == ("Checked with service\nContact: Service desk", None, "Open")
+    assert unknown_date[-3:] == (expected_action, None, "Open")
 
 
 def test_downloads_are_isolated_and_replaced(generated, services, app):

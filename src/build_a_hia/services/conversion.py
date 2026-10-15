@@ -8,22 +8,18 @@ timeouts, and full-page OCR retries pages with missing or sparse readable text.
 import io
 import logging
 import re
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urljoin
 
 if TYPE_CHECKING:
     from bs4 import BeautifulSoup, Tag
 
 from .chunking import ConvertedUnit, estimate_tokens
-from .inspection import FILE_EXTENSIONS, IMAGE_FORMATS, SourceError, SourceFormat, inspect_content
-from .url_fetch import FetchResult, parse_url
+from .inspection import IMAGE_FORMATS, SourceError, SourceFormat
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +29,6 @@ MAX_TIMEOUT = 600.0
 # Small page ranges avoid native out-of-memory errors (std::bad_alloc) on large PDFs.
 PDF_CHUNK_PAGES = 5
 MIN_READABLE_TOKENS = 30
-MAX_HTML_IMAGES = 10
-MAX_HTML_IMAGE_BYTES = 5 * 1024 * 1024
-MAX_HTML_IMAGE_TOTAL_BYTES = 20 * 1024 * 1024
-MIN_HTML_IMAGE_PIXELS = 40_000
-MIN_HTML_IMAGE_EDGE = 100
-HTML_IMAGE_TIME_BUDGET = 300.0
-HTML_IMAGE_OCR_TIMEOUT = 60.0
-HTML_IMAGE_FETCH_TIMEOUT = 10.0
 # Several languages share a recognizer; use engine codes, not ambiguous language aliases.
 OCR_LANGUAGES = {
     "en": "iso:en",
@@ -71,25 +59,31 @@ _HTML_UI_MARKER = re.compile(
 _HTML_DECORATIVE_IMAGE = re.compile(
     r"(?:^|[-_.\s/])(?:logos?|icons?|ico|avatars?|spacers?)(?=$|[-_.\s/])", re.IGNORECASE
 )
-
-HtmlImageFetcher = Callable[[str, int, float], FetchResult]
+_HTML_IMAGE_TAG = re.compile(rb"<img[\s/>]", re.IGNORECASE)
 
 
 def _html_image_src(tag: "Tag") -> str:
-    for attribute in ("data-src", "src"):
+    for attribute in ("data-src", "data-lazy-src", "src"):
         value = tag.get(attribute)
-        if isinstance(value, str) and value.strip():
+        if (
+            isinstance(value, str)
+            and value.strip()
+            and not value.strip().lower().startswith("data:")
+        ):
             return value.strip()
-    for attribute in ("data-srcset", "srcset"):
+    for attribute in ("data-srcset", "data-lazy-srcset", "srcset"):
         value = tag.get(attribute)
         if isinstance(value, str) and value.strip():
             candidate = value.split(",")[-1].strip().split()
             if candidate:
                 return candidate[0]
-    return ""
+    value = tag.get("src")
+    return value.strip() if isinstance(value, str) else ""
 
 
 def _html_is_decorative_image(tag: "Tag") -> bool:
+    if _html_image_src(tag).lower().startswith("data:image/svg+xml"):
+        return True
     if _html_roles(tag) & {"presentation", "none"}:
         return True
     if str(tag.get("aria-hidden", "")).strip().lower() == "true":
@@ -126,6 +120,8 @@ def _html_is_widget(tag: "Tag") -> bool:
 def _html_main_content(soup: "BeautifulSoup") -> None:
     """Keep all nonempty main landmarks, or articles when no main exists.
 
+    Image-only landmarks count as nonempty: their images are not read, so such pages fail
+    with a clear message instead of silently falling back to unrelated body text.
     Retain the body when no usable landmark exists (common for static FAQ fragments).
     Article headers/footers and static service sidebars inside main are content, not
     site chrome; do not discard them just because of their tag names.
@@ -329,24 +325,11 @@ def _docling() -> SimpleNamespace:
 
 
 class DoclingConverter:
-    """Convert source files to markdown with Docling, reusing converters across calls.
+    """Convert source files to markdown with Docling, reusing converters across calls."""
 
-    Args:
-        image_fetcher: Validated image downloader taking URL, byte limit and per-hop timeout.
-            When absent, embedded images are not fetched and produce conversion limitations.
-        clock: Monotonic clock used to bound embedded-image processing.
-    """
-
-    def __init__(
-        self,
-        *,
-        image_fetcher: HtmlImageFetcher | None = None,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
+    def __init__(self) -> None:
         # Converters cache their loaded models, so reuse them across chunks.
         self._converters: dict[tuple[bool, float, bool, str], Any] = {}
-        self._image_fetcher = image_fetcher
-        self._clock = clock
 
     def convert(
         self,
@@ -366,8 +349,8 @@ class DoclingConverter:
             path: File to convert.
             source_format: Format detected by inspection.
             progress: Called with pages done and total pages; may raise to stop the conversion.
-            base_url: Address of a fetched web page, used to make its relative links and image
-                addresses absolute. Content images use only the injected validated fetcher.
+            base_url: Address of a fetched web page, used to make its relative links absolute.
+                Nothing is fetched from it; text in its content images is not read.
             ocr_language: Language of scanned text, selected separately for each source.
 
         Returns:
@@ -381,7 +364,16 @@ class DoclingConverter:
         validate_ocr_language(ocr_language)
         if source_format == SourceFormat.PDF:
             return self._convert_pdf(path, progress, ocr_language)
-        return self._convert_whole(path, source_format, progress, base_url, ocr_language)
+        output = self._convert_whole(path, source_format, progress, base_url, ocr_language)
+        if source_format in IMAGE_FORMATS and any(
+            _text_tokens(unit.markdown) < MIN_READABLE_TOKENS for unit in output.units
+        ):
+            output.limitations.append(
+                f"Very little text could be read from this image "
+                f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
+                "Check the converted text and selected language."
+            )
+        return output
 
     def prefetch_models(self) -> None:
         """Download and load the PDF and image pipeline models before the first conversion."""
@@ -563,139 +555,6 @@ class DoclingConverter:
             partial=result.status == docling.ConversionStatus.PARTIAL_SUCCESS,
         )
 
-    def _ocr_html_images(
-        self, data: bytes, path: Path, base_url: str, ocr_language: str, progress: ProgressCallback
-    ) -> tuple[bytes, list[str]]:
-        from bs4 import BeautifulSoup
-        from PIL import Image
-
-        soup = BeautifulSoup(data, "html.parser")
-        images = soup.find_all("img")
-        limitations: list[str] = []
-        cached: dict[str, tuple[str, str]] = {}
-        used_bytes = 0
-        deadline = self._clock() + HTML_IMAGE_TIME_BUDGET
-        unread = 0
-        for image in images:
-            progress(0, 1)
-            src = _html_image_src(image)
-            try:
-                url = urljoin(base_url, src)
-            except ValueError:
-                limitations.append(
-                    "Could not read a content image because its address is invalid. "
-                    "Upload the image as a separate source."
-                )
-                continue
-            if url not in cached:
-                remaining = deadline - self._clock()
-                if (
-                    len(cached) >= MAX_HTML_IMAGES
-                    or used_bytes >= MAX_HTML_IMAGE_TOTAL_BYTES
-                    or remaining <= HTML_IMAGE_OCR_TIMEOUT
-                ):
-                    unread += 1
-                    continue
-                cached[url] = ("", url)
-                allowance = min(MAX_HTML_IMAGE_BYTES, MAX_HTML_IMAGE_TOTAL_BYTES - used_bytes)
-                fetched: FetchResult | None = None
-                try:
-                    if not src:
-                        raise SourceError(
-                            "invalid_url", "The image has no supported image address."
-                        )
-                    target = parse_url(url)
-                    if self._image_fetcher is None:
-                        raise SourceError(
-                            "image_fetch_disabled", "Content-image downloading is not enabled."
-                        )
-                    fetched = self._image_fetcher(
-                        target.url,
-                        allowance,
-                        min(
-                            HTML_IMAGE_FETCH_TIMEOUT,
-                            (remaining - HTML_IMAGE_OCR_TIMEOUT) / 3,
-                        ),
-                    )
-                    used_bytes += len(fetched.data)
-                    if len(fetched.data) > allowance:
-                        raise SourceError("too_large", "This image exceeds the download limit.")
-                    inspected = inspect_content(fetched.data, max_pages=1)
-                    if inspected.format not in IMAGE_FORMATS:
-                        raise SourceError(
-                            "unsupported", "The image address did not return an image."
-                        )
-                    with Image.open(io.BytesIO(fetched.data)) as decoded:
-                        width, height = decoded.size
-                    if (
-                        min(width, height) < MIN_HTML_IMAGE_EDGE
-                        or width * height < MIN_HTML_IMAGE_PIXELS
-                    ):
-                        continue
-                    if deadline - self._clock() < HTML_IMAGE_OCR_TIMEOUT:
-                        raise SourceError(
-                            "timeout", "The page's image-processing time limit was reached."
-                        )
-                    with TemporaryDirectory(prefix="hia-image-", dir=path.parent) as directory:
-                        image_path = Path(directory) / f"image{FILE_EXTENSIONS[inspected.format]}"
-                        image_path.write_bytes(fetched.data)
-                        output = self._convert_whole(
-                            image_path,
-                            inspected.format,
-                            lambda *_args: progress(0, 1),
-                            "",
-                            ocr_language,
-                            timeout=HTML_IMAGE_OCR_TIMEOUT,
-                        )
-                    cached[url] = (
-                        "\n\n".join(unit.markdown for unit in output.units),
-                        fetched.final_url,
-                    )
-                    limitations.extend(
-                        f"Content image {target.url}: {note}" for note in output.limitations
-                    )
-                except SourceError as error:
-                    if fetched is None and error.code not in {
-                        "invalid_url",
-                        "blocked_address",
-                        "image_fetch_disabled",
-                    }:
-                        # A failed streaming download may have consumed its entire allowance.
-                        used_bytes += allowance
-                    limitations.append(
-                        f"Could not read content image {url or '(no address)'}: {error.message} "
-                        "Add the image directly as a source or upload a copy."
-                    )
-            text, image_url = cached[url]
-            if text:
-                block = soup.new_tag("div")
-                label = soup.new_tag("p")
-                label.string = "Text read from image using OCR; check against the original image."
-                block.append(label)
-                link = soup.new_tag("a", href=image_url)
-                link.string = "Original image"
-                block.append(link)
-                for line in text.splitlines():
-                    if line.strip():
-                        paragraph = soup.new_tag("p")
-                        paragraph.string = line
-                        block.append(paragraph)
-                image.replace_with(block)
-        if unread:
-            limitations.append(
-                f"{unread} content image(s) were not read because the page's image count, "
-                "download or processing-time limit was reached. "
-                "Add those images directly as sources or upload copies."
-            )
-        read = sum(bool(text) for text, _url in cached.values())
-        if read:
-            limitations.append(
-                f"Text in {read} content image(s) was read using OCR. "
-                "Compare the images with the converted text before approving this source: "
-                "OCR may omit or misread words, numbers and table entries."
-            )
-        return soup.encode("utf-8"), limitations
-
     def _convert_whole(
         self,
         path: Path,
@@ -703,28 +562,25 @@ class DoclingConverter:
         progress: ProgressCallback,
         base_url: str,
         ocr_language: str,
-        *,
-        timeout: float = MAX_TIMEOUT,
     ) -> ConversionOutput:
         docling = _docling()
         progress(0, 1)
         is_image = source_format in IMAGE_FORMATS
         failed = SourceError("conversion_failed", "This file could not be converted.")
         source: Any = path
-        html_limitations: list[str] = []
+        has_content_images = False
         if source_format == SourceFormat.HTML:
             converter = self._html_converter(base_url)
+            data = _normalize_html(path.read_bytes())
+            has_content_images = _HTML_IMAGE_TAG.search(data) is not None
             # From a file path, Docling resolves links like "/about/" against the temp folder
             # and fails the whole page; a stream uses `base_url`, or keeps links as written.
-            data, html_limitations = self._ocr_html_images(
-                _normalize_html(path.read_bytes()), path, base_url, ocr_language, progress
-            )
             source = docling.DocumentStream(name=path.name, stream=io.BytesIO(data))
         try:
             if source_format != SourceFormat.HTML:
                 converter = self._converter(
                     paginated=is_image,
-                    timeout=timeout,
+                    timeout=MAX_TIMEOUT,
                     with_ocr=is_image,
                     ocr_language=ocr_language,
                 )
@@ -760,12 +616,12 @@ class DoclingConverter:
         units = [unit for unit in units if _text_tokens(unit.markdown)]
         if not units:
             if source_format == SourceFormat.HTML:
-                if html_limitations:
+                if has_content_images:
                     raise SourceError(
                         "no_text",
-                        "No readable text was found on this page, and some content images "
-                        "could not be read. Check the selected OCR language, or add the "
-                        "images directly as sources.",
+                        "No readable text was found on this page; its content appears to be "
+                        "images. Text in images on web pages is not read. Add the image "
+                        "addresses directly as sources, or upload copies of the images.",
                     )
                 raise SourceError(
                     "no_text",
@@ -773,7 +629,7 @@ class DoclingConverter:
                     "its content; upload the document or save the page as PDF instead.",
                 )
             raise SourceError("no_text", "No readable text was found in this file.")
-        limitations = html_limitations
+        limitations: list[str] = []
         if result.status == docling.ConversionStatus.PARTIAL_SUCCESS:
             limitations.append("Part of this file could not be converted.")
         if source_format == SourceFormat.HTML and _html_has_sparse_body(
@@ -784,15 +640,8 @@ class DoclingConverter:
                 "FAQ answers or other content may be missing. Check the converted text "
                 "against the original page, or upload a complete document."
             )
-        if is_image:
-            if missing:
-                limitations.append("Some image pages contained no readable text.")
-            if any(_text_tokens(unit.markdown) < MIN_READABLE_TOKENS for unit in units):
-                limitations.append(
-                    f"Very little text could be read from this image "
-                    f"(under {MIN_READABLE_TOKENS} estimated tokens per page). "
-                    "Check the converted text and selected language."
-                )
+        if is_image and missing:
+            limitations.append("Some image pages contained no readable text.")
         progress(1, 1)
         return ConversionOutput(units=units, limitations=limitations)
 

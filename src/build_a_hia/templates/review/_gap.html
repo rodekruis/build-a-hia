@@ -8,13 +8,5 @@
     {% if gap.field %}<span class="meta">· {{ gap.field }}</span>{% endif %}
   </div>
   <p>{{ gap.issue }}</p>
-  <form method="post" action="{{ url_for('review.update_gap', gap_id=gap.id) }}" data-gap-autosave>
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <input type="hidden" name="back" value="{{ '' if on_overview else gap.subcategory_key }}">
-    <div class="field">
-      <label for="action-{{ gap.id }}">Suggested action</label>
-      <textarea id="action-{{ gap.id }}" name="suggested_action" maxlength="1000" aria-describedby="save-status-{{ gap.id }}">{{ gap.suggested_action }}</textarea>
-    </div>
-    <p id="save-status-{{ gap.id }}" class="meta" role="status" aria-live="polite" data-save-status hidden></p>
-  </form>
+  <p class="gap-action"><strong>Suggested action:</strong> {{ gap.suggested_action }}</p>
 </li>

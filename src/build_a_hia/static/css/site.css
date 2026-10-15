@@ -172,11 +172,14 @@ main {
 
 .workspace {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 1.25rem;
+  min-width: 0;
   width: min(100%, 52rem);
 }
 
 .panel {
+  min-width: 0;
   width: min(100%, 52rem);
   padding: clamp(1.25rem, 3vw, 1.75rem);
   border-radius: var(--radius-card);
@@ -498,8 +501,13 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+.gap-action {
+  white-space: pre-line;
+}
+
 .source-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.75rem;
   margin: 0;
   padding: 0;
@@ -520,6 +528,11 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.5rem;
+}
+
+.source {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .source-title {
@@ -645,24 +658,32 @@ textarea {
   background: var(--grey-50);
 }
 
+.tree-edit .source-actions {
+  align-items: center;
+}
+
+.tree-edit .source-actions .inline-form {
+  margin: 0;
+}
+
+.tree-target-form {
+  display: flex;
+  margin: 1rem 0 0;
+}
+
 .offer,
 .question {
   margin-bottom: 0.75rem;
 }
 
-.question.depth-1,
-.question.depth-2,
-.question.depth-3 {
-  border-left: 3px solid var(--purple-500);
+.content-remove {
+  margin-top: 1rem;
 }
 
-.question.depth-1 {
-  margin-left: 1.5rem;
-}
-
-.question.depth-2,
-.question.depth-3 {
-  margin-left: 3rem;
+.question.sub-question {
+  padding: 0.75rem;
+  border: 0;
+  background: var(--grey-50);
 }
 
 .content-fields {

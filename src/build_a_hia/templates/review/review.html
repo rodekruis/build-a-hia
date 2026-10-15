@@ -15,7 +15,7 @@
         <p class="warning">Approve the structure and generate content first.
           <a href="{{ url_for('drafting.content') }}">Go to the content</a>.</p>
       {% else %}
-        <p class="meta">{{ reviewed }} of {{ plan.subcategories | length }} reviewed. Sub-categories that still need review are listed first.</p>
+        <p class="meta">{{ reviewed }} of {{ plan.subcategories | length }} reviewed.</p>
       {% endif %}
       <ul class="source-list">
         {% for sub in subcategories %}
@@ -59,7 +59,7 @@
       {% else %}
         <p class="success">No gaps found.</p>
       {% endif %}
-      <div class="actions">
+      <div class="actions" id="review-actions">
         <a class="button" href="{{ url_for('review.download') }}">Continue to download</a>
       </div>
     </section>

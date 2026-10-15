@@ -1,3 +1,6 @@
+from datetime import date
+
+from build_a_hia.services import prompts as prompts_module
 from build_a_hia.services.context import ProjectContext
 from build_a_hia.services.prompts import (
     SourceChunk,
@@ -15,7 +18,6 @@ CONTEXT = ProjectContext(
     locations="Kyiv",
     output_language="uk",
     locale_dir="ltr",
-    reference_date="2026-10-01",
 )
 SOURCES = [
     SourceMaterial(
@@ -51,12 +53,18 @@ def test_untrusted_text_cannot_break_out_of_the_sources_block():
     assert "[S1-p1-c1]" in rendered
 
 
-def test_context_is_rendered_for_the_model():
+def test_context_is_rendered_for_the_model(monkeypatch):
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 10, 15)
+
+    monkeypatch.setattr(prompts_module, "date", Today)
     messages = structure_messages(CONTEXT, SOURCES)
 
     context = messages[2]["content"]
     assert "Output language: Ukrainian (uk), text direction ltr" in context
-    assert "Reference date (information should be valid on this date): 2026-10-01" in context
+    assert "Reference date (information should be valid on this date): 2026-10-15" in context
     assert "Languages of the sources" not in context
 
 
@@ -73,6 +81,23 @@ def test_content_requests_share_an_identical_prefix():
     assert "Sub-category: Beds" in first[-1]["content"]
     assert "S1-p1-c1" in first[-1]["content"]
     assert "Sub-category: Rent — Help with rent." in second[-1]["content"]
+
+
+def test_today_is_resolved_for_each_request_without_resaving_context(monkeypatch):
+    days = iter([date(2026, 10, 15), date(2026, 10, 16)])
+
+    class Today(date):
+        @classmethod
+        def today(cls):
+            return next(days)
+
+    monkeypatch.setattr(prompts_module, "date", Today)
+    first = structure_messages(CONTEXT, SOURCES)
+    category = STRUCTURE.categories[0]
+    second = content_messages(CONTEXT, SOURCES, STRUCTURE, category, category.children[0])
+
+    assert "2026-10-15" in first[2]["content"]
+    assert "2026-10-16" in second[2]["content"]
 
 
 def test_revision_includes_instructions_and_current_structure():

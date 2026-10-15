@@ -64,6 +64,45 @@
   <input type="hidden" name="parent" value="{{ item.question.parent_ref if item else (parent_ref or '') }}">
 {%- endmacro %}
 
+{% macro question_card(item, editable) -%}
+  <article class="question{{ ' sub-question' if item.depth > 0 else '' }}" id="question-{{ item.question.ref }}">
+    <h3 data-item-title>{{ item.question.question }}</h3>
+    <p class="meta">
+      slug {{ item.slug }}{% if item.parent_slug %} · follow-up to {{ item.parent_slug }}{% endif %}
+      · updated {{ item.updated }} · highlight No
+      {% if item.question.question_edited %}<span class="badge badge-edited">Question edited</span>{% endif %}
+    </p>
+    {% if editable %}
+      <form method="post" action="{{ url_for('review.edit_question', key=subcategory.key, ref=item.question.ref) }}" data-content-autosave>
+        {{ hidden_fields() }}
+        {{ question_fields("question-" ~ item.question.ref, item=item) }}
+        <p class="meta" role="status" aria-live="polite" data-save-status hidden></p>
+      </form>
+    {% else %}
+      {{ value(item.question.answer) }}
+    {% endif %}
+    {% for child in subcategory.questions if child.question.parent_ref == item.question.ref %}
+      {{ question_card(child, editable) }}
+    {% endfor %}
+    {% if editable %}
+      {% if item.depth == 0 %}
+        <details class="tree-edit" id="add-sub-question-{{ item.question.ref }}">
+          <summary>Add a sub-question</summary>
+          <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
+            {{ hidden_fields() }}
+            {{ question_fields("new-sub-question-" ~ item.question.ref, parent_ref=item.question.ref) }}
+            <button type="submit" class="button secondary">Add sub-question</button>
+          </form>
+        </details>
+      {% endif %}
+      <form class="content-remove" method="post" action="{{ url_for('review.delete_question', key=subcategory.key, ref=item.question.ref) }}">
+        {{ hidden_fields() }}
+        <button type="submit" class="button secondary">{{ "Remove sub-question" if item.depth > 0 else "Remove question" }}</button>
+      </form>
+    {% endif %}
+  </article>
+{%- endmacro %}
+
 {% block content %}
   {% set content = subcategory.content %}
   {% set editable = content and blob and status == "done" %}
@@ -101,9 +140,9 @@
                 {{ offer_fields("offer-" ~ item.offer.id, item.offer) }}
                 <p class="meta" role="status" aria-live="polite" data-save-status hidden></p>
               </form>
-              <form method="post" action="{{ url_for('review.delete_offer', key=subcategory.key, offer_id=item.offer.id) }}">
+              <form class="content-remove" method="post" action="{{ url_for('review.delete_offer', key=subcategory.key, offer_id=item.offer.id) }}">
                 {{ hidden_fields() }}
-                <button type="submit" class="button danger">Remove offer</button>
+                <button type="submit" class="button secondary">Remove offer</button>
               </form>
             {% else %}
               {{ value(item.offer.name) }}
@@ -135,38 +174,8 @@
 
       <section class="panel" id="questions" aria-labelledby="questions-title">
         <h2 id="questions-title">Questions ({{ subcategory.questions | length }})</h2>
-        {% for item in subcategory.questions %}
-          <article class="question depth-{{ [item.depth, 3] | min }}" id="question-{{ item.question.ref }}">
-            <h3 data-item-title>{{ item.question.question }}</h3>
-            <p class="meta">
-              slug {{ item.slug }}{% if item.parent_slug %} · follow-up to {{ item.parent_slug }}{% endif %}
-              · updated {{ item.updated }} · highlight No
-              {% if item.question.question_edited %}<span class="badge badge-edited">Question edited</span>{% endif %}
-            </p>
-            {% if editable %}
-              <form method="post" action="{{ url_for('review.edit_question', key=subcategory.key, ref=item.question.ref) }}" data-content-autosave>
-                {{ hidden_fields() }}
-                {{ question_fields("question-" ~ item.question.ref, item=item) }}
-                <p class="meta" role="status" aria-live="polite" data-save-status hidden></p>
-              </form>
-              {% if item.depth == 0 %}
-                <details class="tree-edit" id="add-sub-question-{{ item.question.ref }}">
-                  <summary>Add a sub-question</summary>
-                  <form method="post" action="{{ url_for('review.new_question', key=subcategory.key) }}">
-                    {{ hidden_fields() }}
-                    {{ question_fields("new-sub-question-" ~ item.question.ref, parent_ref=item.question.ref) }}
-                    <button type="submit" class="button secondary">Add sub-question</button>
-                  </form>
-                </details>
-              {% endif %}
-              <form method="post" action="{{ url_for('review.delete_question', key=subcategory.key, ref=item.question.ref) }}">
-                {{ hidden_fields() }}
-                <button type="submit" class="button danger">{{ "Remove sub-question" if item.depth > 0 else "Remove question" }}</button>
-              </form>
-            {% else %}
-              {{ value(item.question.answer) }}
-            {% endif %}
-          </article>
+        {% for item in subcategory.questions if item.depth == 0 %}
+          {{ question_card(item, editable) }}
         {% endfor %}
         {% if editable %}
           <details class="tree-edit">

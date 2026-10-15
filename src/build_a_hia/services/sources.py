@@ -5,6 +5,7 @@ chunks are blobs under the session's prefix. Fetching and conversion run as back
 """
 
 import json
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,6 +23,7 @@ from .url_fetch import parse_url
 SOURCE_ROW_PREFIX = "source:"
 MAX_TITLE_LENGTH = 200
 _MAX_UPDATE_ATTEMPTS = 5
+_UNREAD_CONTENT_IMAGES = re.compile(r"\d+ content image\(s\) were not read ")
 
 
 class SourceKind(StrEnum):
@@ -75,6 +77,17 @@ def clean_title(value: str) -> str:
     """Drop non-printable characters, collapse whitespace and cut to `MAX_TITLE_LENGTH`."""
     printable = "".join(character for character in value if character.isprintable())
     return " ".join(printable.split())[:MAX_TITLE_LENGTH]
+
+
+def _web_image_ocr_note(note: str) -> bool:
+    """Recognize notes from the retired web-page image OCR in sources converted earlier."""
+    return (
+        note.startswith(
+            ("Content image ", "Could not read content image ", "Could not read a content image ")
+        )
+        or (note.startswith("Text in ") and " content image(s) was read using OCR." in note)
+        or _UNREAD_CONTENT_IMAGES.match(note) is not None
+    )
 
 
 @dataclass
@@ -181,6 +194,9 @@ class Source:
     def from_stored(cls, source_id: str, stored: StoredEntity) -> "Source":
         """Build a source from its ID and stored table entity."""
         data = stored.data
+        limitations: list[str] = json.loads(data.get("limitations") or "[]")
+        if data.get("format") == "html":
+            limitations = [note for note in limitations if not _web_image_ocr_note(note)]
         return cls(
             id=source_id,
             number=int(data["number"]),
@@ -202,7 +218,7 @@ class Source:
             token_count=int(data.get("token_count", 0)),
             error_code=data.get("error_code", ""),
             error_message=data.get("error_message", ""),
-            limitations=json.loads(data.get("limitations") or "[]"),
+            limitations=limitations,
             ocr_language=data.get("ocr_language", "en"),
             version=int(data.get("version", 1)),
             etag=stored.etag,
