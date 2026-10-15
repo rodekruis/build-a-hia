@@ -124,9 +124,6 @@ def context():
                 "output_language": language_label(existing.output_language),
                 "locale_dir": existing.locale_dir,
                 "source_languages": existing.source_languages,
-                "reference_date": (
-                    date.fromisoformat(existing.reference_date) if existing.reference_date else None
-                ),
             }
         )
     else:
@@ -142,7 +139,6 @@ def context():
             "output_language": language,
             "locale_dir": form.locale_dir.data or default_direction(language),
             "source_languages": (form.source_languages.data or "").strip(),
-            "reference_date": _iso(form.reference_date.data),
         }
         new_context = replace(existing, **values) if existing else ProjectContext(**values)
         hia = services()

@@ -20,7 +20,6 @@ class ProjectContext:
         output_language: BCP 47 code of the HIA content, such as "ar" or "pt-BR".
         locale_dir: Text direction for #locale.dir: "ltr", "rtl" or "auto".
         source_languages: Languages of the sources, if given.
-        reference_date: ISO date on which the information should be valid, or "".
     """
 
     country: str
@@ -30,7 +29,6 @@ class ProjectContext:
     output_language: str
     locale_dir: str
     source_languages: str = ""
-    reference_date: str = ""
 
     @property
     def language(self) -> Language | None:

@@ -24,7 +24,6 @@
         {% endfor %}
       </datalist>
       {{ field(form.source_languages, "For example: Ukrainian, English.") }}
-      {{ field(form.reference_date, "Optional. Information should be valid on this date.") }}
       <div class="actions">
         <button type="submit" class="button">{{ "Save and continue" if workspace and workspace.context else "Start session" }}</button>
       </div>

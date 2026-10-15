@@ -6,11 +6,12 @@ so the deployment's prompt caching applies; only the final task message differs.
 
 import re
 from dataclasses import dataclass
+from datetime import date
 
 from .context import ProjectContext
 from .structure import Node, Structure
 
-PROMPT_VERSION = "2026-10-15.2"
+PROMPT_VERSION = "2026-10-15.3"
 EXAMPLES_VERSION = "fictional-v1"
 
 SYSTEM_PROMPT = f"""\
@@ -241,7 +242,7 @@ def render_sources(sources: list[SourceMaterial]) -> str:
 
 
 def render_context(context: ProjectContext) -> str:
-    """Render the staff-provided project context; optional fields are omitted when empty."""
+    """Render the project context with today's date; omit empty optional fields."""
     language = context.language
     language_name = (
         f"{language.name} ({context.output_language})" if language else context.output_language
@@ -253,10 +254,10 @@ def render_context(context: ProjectContext) -> str:
         f"- Target group: {context.target_group}",
         f"- Regions or locations: {context.locations}",
         f"- Output language: {language_name}, text direction {context.locale_dir}",
+        f"- Reference date (information should be valid on this date): {date.today().isoformat()}",
     ]
     optional = [
         ("Languages of the sources", context.source_languages),
-        ("Reference date (information should be valid on this date)", context.reference_date),
     ]
     lines += [f"- {label}: {value}" for label, value in optional if value]
     return "\n".join(lines)

@@ -6,10 +6,10 @@ Filling that sheet by hand from guidelines, documents and web pages can take day
 
 ## How it works
 
-1. **Context**: describe the crisis, target group, locations and the output language.
+1. **Context**: describe the crisis, target group, locations and the output language. Generation and source-age checks automatically use today's date; there is no reference-date input.
 2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
 3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve.
-4. **Content**: the AI writes the offers and questions for each sub-category. Facts must cite a source passage; anything the sources do not support is left blank and reported as a gap. A separate AI check assesses each populated field against the intended programme and audience: facts supported only for another programme, or with unclear applicability, are withheld and kept as cited gaps for staff follow-up. This check uses an additional request (and AI allowance) for each nonempty draft; failed or incomplete checks do not save new content.
+4. **Content**: the AI writes the offers and questions for each sub-category in one request, assessing programme applicability, contact conflicts and shared contacts in the same draft. Facts must cite a source passage; unsupported or inapplicable information is left blank and reported as a gap. Deterministic checks validate citations and literal contact values before staff review.
 5. **Review**: staff check each sub-category against the cited evidence, edit its fields inline and approve it. Edits save automatically. Q&As support one level of follow-ups within the same sub-category. Generated deeper chains are flattened under their top-level question and flagged as structure gaps; reviewer edits and export validation prevent deeper nesting. Gaps (missing, conflicting or outdated information, failed sources) show an editable suggested action, including any relevant contact.
 6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
 

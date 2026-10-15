@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict
 
+import pytest
 from factories import CONTEXT_FORM, session_key_of
 
 from build_a_hia import create_app
@@ -23,6 +24,8 @@ def test_context_page_shows_form(client):
 
     assert response.status_code == 200
     assert b"Describe the situation" in response.data
+    assert b'name="reference_date"' not in response.data
+    assert b"Reference date" not in response.data
 
 
 def test_saving_context_creates_session_cookie_and_redirects(client, services):
@@ -39,7 +42,7 @@ def test_saving_context_creates_session_cookie_and_redirects(client, services):
     assert workspace.context.country == "Ukraine"
     assert workspace.context.locale_language == "uk"
     assert workspace.context.locale_dir == "ltr"
-    assert workspace.context.reference_date == "2026-10-01"
+    assert "reference_date" not in json.loads(workspace.context.to_json())
 
 
 def test_cookie_token_is_not_stored(client, services):
@@ -106,6 +109,16 @@ def test_context_is_prefilled_on_return(workspace_client):
     response = workspace_client.get("/context")
 
     assert b"Dnipro, Kharkiv" in response.data
+    assert b'name="reference_date"' not in response.data
+
+
+@pytest.mark.parametrize("reference_date", ["1900-01-01", "not-a-date"])
+def test_submitted_reference_date_cannot_override_today(client, services, reference_date):
+    response = client.post("/context", data={**CONTEXT_FORM, "reference_date": reference_date})
+
+    assert response.status_code == 302
+    workspace = services.sessions.get_active(session_key_of(client))
+    assert "reference_date" not in json.loads(workspace.context.to_json())
 
 
 def test_updating_context_keeps_session(workspace_client, services):
@@ -119,7 +132,14 @@ def test_updating_context_keeps_session(workspace_client, services):
 
 
 def test_contexts_saved_with_removed_fields_still_load():
-    raw = json.dumps({**asdict(CONTEXT), "organisation": "Ukrainian Red Cross", "notes": "x"})
+    raw = json.dumps(
+        {
+            **asdict(CONTEXT),
+            "organisation": "Ukrainian Red Cross",
+            "notes": "x",
+            "reference_date": "1900-01-01",
+        }
+    )
 
     assert ProjectContext.from_json(raw) == CONTEXT
 

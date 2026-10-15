@@ -413,12 +413,13 @@ def collect_gaps(
         categories: Assembled categories with their content.
         sources: Sources of the session.
         overrides: Reviewer values per gap ID, from `GapStore.overrides`.
-        reference_date: Date for age checks, or "" to use each draft's generation date.
+        reference_date: Date for age checks, or "" to use today's date.
 
     Returns:
         Gaps in sub-category order, followed by source gaps.
     """
     gaps: list[Gap] = []
+    on = date.fromisoformat(reference_date) if reference_date else date.today()
     by_source = {source.id: source for source in sources}
     source_dates: dict[str, tuple[Source, list[Evidence], str]] = {}
 
@@ -472,7 +473,6 @@ def collect_gaps(
                         if evidence.source_id in by_source
                     )
                     if known_sources:
-                        on = date.fromisoformat(reference_date or content.generated_on)
                         for source_id in known_sources:
                             source = by_source[source_id]
                             if (

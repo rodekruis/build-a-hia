@@ -1,4 +1,5 @@
 import io
+from datetime import date, timedelta
 
 import pytest
 from factories import (
@@ -746,7 +747,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     recent = services.sources.repository.list_for(key)[0]
 
     def set_date(source):
-        source.document_date = "2025-10-02"
+        source.document_date = (date.today() - timedelta(days=364)).isoformat()
         source.document_date_origin = "user"
         return True
 
@@ -755,7 +756,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     old = add_converted_source(services, key, ["Old service guidance."], "Old guide")
 
     def set_old_date(source):
-        source.document_date = "2024-07-01"
+        source.document_date = (date.today() - timedelta(days=366)).isoformat()
         source.document_date_origin = "user"
         return True
 

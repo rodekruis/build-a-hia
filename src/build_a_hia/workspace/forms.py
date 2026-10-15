@@ -49,7 +49,6 @@ class ContextForm(FlaskForm):
     source_languages = StringField(
         "Languages of your sources", validators=[Optional(), Length(max=300)]
     )
-    reference_date = DateField("Reference date", validators=[Optional()])
 
     def validate_output_language(self, field: StringField) -> None:
         """Accept a known language name (English or Dutch) or a well-formed language code."""

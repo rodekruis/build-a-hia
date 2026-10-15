@@ -393,7 +393,6 @@ def content_detail(key: str):
             [category],
             hia.sources.repository.list_for(workspace.key),
             overrides,
-            reference_date=workspace.context.reference_date if workspace.context else "",
         )
         if gap.subcategory_key == subcategory.key
     ]
