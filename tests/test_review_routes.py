@@ -118,7 +118,9 @@ def test_pages_do_not_describe_generated_content_as_hidden(generated, services):
     assert b"Hidden rows" not in download_page.data
     assert b"hidden scaffolding row" not in download_page.data
     assert b"copy rows 2 and below" in download_page.data
-    assert b"Review everything for public disclosure" in download_page.data
+    assert b"Paste special" in download_page.data
+    assert b"Values only" in download_page.data
+    assert b"column B" in download_page.data
 
 
 def test_reviewer_edits_are_flagged_and_withdraw_approval(generated, services):
