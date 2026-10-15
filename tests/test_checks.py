@@ -1,3 +1,4 @@
+import pytest
 from factories import cited, offer, question
 
 from build_a_hia.services.checks import (
@@ -135,6 +136,9 @@ def test_questions_are_single_line_and_nested_safely():
             question("q4", "Loop B", answer, parent_ref="q3"),
             question("q5", "Orphan", answer, parent_ref="missing"),
             question("q6", "Unsupported", cited("Maybe.")),
+            question("q7", "Child of unsupported", answer, parent_ref="q6"),
+            question("q8", "Child of orphan", answer, parent_ref="q7"),
+            question("q9", "Grandchild of orphan", answer, parent_ref="q8"),
         ]
     )
 
@@ -144,6 +148,12 @@ def test_questions_are_single_line_and_nested_safely():
     assert by_ref["q5"].parent_ref == ""
     assert "" in (by_ref["q3"].parent_ref, by_ref["q4"].parent_ref)
     assert "q6" not in by_ref
+    assert by_ref["q7"].parent_ref == ""
+    assert by_ref["q8"].parent_ref == "q7"
+    assert by_ref["q9"].parent_ref == "q7"
+    assert all(
+        not by_ref[item.parent_ref].parent_ref for item in content.questions if item.parent_ref
+    )
 
 
 def test_duplicate_question_refs_become_unique():
@@ -159,6 +169,36 @@ def test_duplicate_question_refs_become_unique():
     refs = [item.ref for item in content.questions]
     assert len(set(refs)) == 3
     assert all(len(ref) <= 40 for ref in refs)
+
+
+@pytest.mark.parametrize("order", [("q1", "q2", "q3", "q4"), ("q4", "q3", "q2", "q1")])
+def test_question_chains_are_flattened_to_one_level(order):
+    questions = {
+        ref: question(
+            ref,
+            f"Question {ref}?",
+            cited(f"Answer {ref}.", "S1-p2-c1"),
+            parent_ref=parent,
+        )
+        for ref, parent in [("q1", ""), ("q2", "q1"), ("q3", "q2"), ("q4", "q3")]
+    }
+
+    content = _check(questions=[questions[ref] for ref in order])
+
+    assert [item.ref for item in content.questions] == list(order)
+    assert {item.ref: item.parent_ref for item in content.questions} == {
+        "q1": "",
+        "q2": "q1",
+        "q3": "q1",
+        "q4": "q1",
+    }
+    assert all(item.question == f"Question {item.ref}?" for item in content.questions)
+    assert all(item.answer.text == f"Answer {item.ref}." for item in content.questions)
+    assert all(item.answer.evidence[0].chunk_id == "S1-p2-c1" for item in content.questions)
+    assert {issue.item_ref for issue in content.issues if issue.kind == "structure"} == {
+        "q3",
+        "q4",
+    }
 
 
 def test_model_issues_are_kept_with_evidence():

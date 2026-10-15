@@ -173,7 +173,7 @@ class ExportService:
 
         Blockers include a missing context, unapproved sources, an unapproved structure,
         missing, running, failed, outdated or unapproved content, template capacity, invalid
-        or duplicate slugs and IDs, and
+        or duplicate slugs and IDs, invalid question parents, and
         text that would run as a formula when pasted into Google Sheets.
 
         Args:
@@ -370,11 +370,16 @@ def _structural_errors(categories: list[AssembledCategory]) -> list[str]:
             check("sub-category", sub.slug, sub.id)
             for offer in sub.offers:
                 check("offer", offer.slug, offer.id)
-            question_slugs = {question.slug for question in sub.questions}
+            questions_by_slug = {question.slug: question for question in sub.questions}
             for question in sub.questions:
                 check("question", question.slug)
-                if question.parent_slug and question.parent_slug not in question_slugs:
+                if not question.parent_slug:
+                    continue
+                parent = questions_by_slug.get(question.parent_slug)
+                if parent is None:
                     errors.append(f"Question “{question.slug}” has an unknown parent.")
+                elif parent.parent_slug:
+                    errors.append(f"Question “{question.slug}” is nested more than one level deep.")
     return errors
 
 

@@ -4,11 +4,14 @@ import socket
 from types import SimpleNamespace
 
 import pytest
+from factories import make_png
 
 from build_a_hia.services import conversion
-from build_a_hia.services.conversion import DoclingConverter
+from build_a_hia.services.chunking import ConvertedUnit
+from build_a_hia.services.conversion import ConversionOutput, DoclingConverter
 from build_a_hia.services.html_meta import extract_html_metadata
 from build_a_hia.services.inspection import SourceError, SourceFormat
+from build_a_hia.services.url_fetch import FetchResult, HttpResponse, SafeFetcher
 
 
 @pytest.fixture
@@ -380,3 +383,239 @@ def test_static_content_in_form_without_interactive_fields_is_not_removed(conver
       <dd hidden>Visit the town hall.</dd></dl></form></body></html>""")
     text = output.units[0].markdown
     assert "Bring an identity card." in text and "Visit the town hall." in text
+
+
+@pytest.fixture
+def embedded_ocr(tmp_path, monkeypatch):
+    state = SimpleNamespace(
+        responses={},
+        fetches=[],
+        ocr=[],
+        text="Payment amount: 250 TL. Apply at the town hall.",
+        error=None,
+        limitations=[],
+    )
+    original = DoclingConverter._convert_whole
+
+    def convert_whole(self, path, source_format, progress, base_url, ocr_language, **kwargs):
+        if source_format == SourceFormat.HTML:
+            return original(self, path, source_format, progress, base_url, ocr_language, **kwargs)
+        state.ocr.append((source_format, ocr_language, kwargs.get("timeout")))
+        assert path.exists()
+        if state.error:
+            raise state.error
+        return ConversionOutput(
+            units=[ConvertedUnit(page=1, markdown=state.text)],
+            limitations=list(state.limitations),
+        )
+
+    monkeypatch.setattr(DoclingConverter, "_convert_whole", convert_whole)
+
+    def fetch(url, max_bytes, timeout):
+        state.fetches.append((url, max_bytes, timeout))
+        data = state.responses.get(url, make_png((600, 400)))
+        if isinstance(data, SourceError):
+            raise data
+        return FetchResult(url, "image/png", data, "")
+
+    def run(html, *, language="ar", clock=lambda: 0.0, image_fetcher=fetch):
+        path = tmp_path / "page.html"
+        path.write_text(html, encoding="utf-8")
+        converter = DoclingConverter(image_fetcher=image_fetcher, clock=clock)
+        output = converter.convert(
+            path,
+            SourceFormat.HTML,
+            lambda *_args: None,
+            base_url="https://example.org/program/page.html",
+            ocr_language=language,
+        )
+        assert not list(tmp_path.glob("hia-image-*"))
+        return output
+
+    state.run = run
+    return state
+
+
+@pytest.mark.parametrize("landmark", ["main", "article", 'div role="main"'])
+def test_image_only_landmarks_are_preserved_and_ocrd(embedded_ocr, landmark):
+    closing = landmark.split()[0]
+    output = embedded_ocr.run(
+        f'<html><body><{landmark}><img src="Images/amounts.png"></{closing}>'
+        "<aside>Unrelated advertisement</aside></body></html>"
+    )
+
+    text = output.units[0].markdown
+    assert "250 TL" in text
+    assert "Unrelated advertisement" not in text
+    assert "Text read from image using OCR" in text
+    assert "https://example.org/program/Images/amounts.png" in text
+    assert embedded_ocr.ocr == [(SourceFormat.PNG, "ar", conversion.HTML_IMAGE_OCR_TIMEOUT)]
+
+
+def test_embedded_ocr_preserves_order_and_deduplicates_images(embedded_ocr):
+    output = embedded_ocr.run(
+        '<main><p>Before payment.</p><img src="amounts.png">'
+        '<p>After payment.</p><img src="./amounts.png"></main>'
+    )
+    text = output.units[0].markdown
+    assert text.index("Before payment.") < text.index("250 TL") < text.index("After payment.")
+    assert text.count("250 TL") == 2
+    assert len(embedded_ocr.fetches) == len(embedded_ocr.ocr) == 1
+
+
+@pytest.mark.parametrize(
+    ("size", "read"),
+    [((100, 400), True), ((200, 200), True), ((99, 500), False), ((199, 200), False)],
+)
+def test_embedded_image_size_policy_uses_actual_pixels(embedded_ocr, size, read):
+    embedded_ocr.responses["https://example.org/program/amounts.png"] = make_png(size)
+    output = embedded_ocr.run(
+        '<main><p>Native information.</p><img src="amounts.png" width="1" height="1"></main>'
+    )
+    assert bool(embedded_ocr.ocr) is read
+    assert ("250 TL" in output.units[0].markdown) is read
+    assert any("OCR may omit or misread" in note for note in output.limitations) is read
+
+
+def test_decorative_images_and_site_chrome_are_not_downloaded(embedded_ocr):
+    output = embedded_ocr.run(
+        '<html><body><nav><img src="menu.png"></nav><main>'
+        '<p>Native information.</p><img src="logo.svg"><img src="ico-f.png">'
+        '<img src="large.png" class="service-logo"><img src="background.png" role="presentation">'
+        '<img src="hidden.png" aria-hidden="true"><img src="amounts.png" alt="">'
+        "</main></body></html>"
+    )
+    assert [url for url, *_ in embedded_ocr.fetches] == ["https://example.org/program/amounts.png"]
+    assert "250 TL" in output.units[0].markdown
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    ['data-src="amounts.png" src="placeholder.png"', 'srcset="small.png 1x, amounts.png 2x"'],
+)
+def test_lazy_and_responsive_image_addresses_are_resolved(embedded_ocr, attribute):
+    embedded_ocr.run(f"<main><img {attribute}></main>")
+    assert embedded_ocr.fetches[0][0] == "https://example.org/program/amounts.png"
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["http://169.254.169.254/secret", "file:///secret.png", "http://[invalid", ""],
+)
+def test_invalid_image_addresses_warn_without_fetching(embedded_ocr, url):
+    output = embedded_ocr.run(f'<main><p>Native information.</p><img src="{url}"></main>')
+    assert embedded_ocr.fetches == []
+    assert "Native information." in output.units[0].markdown
+    assert any("Could not read" in note for note in output.limitations)
+
+
+@pytest.mark.parametrize(
+    "data",
+    [b"not an image", SourceError("not_found", "The image was not found.")],
+)
+def test_unreadable_content_images_keep_native_text_with_warnings(embedded_ocr, data):
+    embedded_ocr.responses["https://example.org/program/amounts.png"] = data
+    output = embedded_ocr.run('<main><p>Native information.</p><img src="amounts.png"></main>')
+
+    assert "Native information." in output.units[0].markdown
+    assert any("Could not read content image" in note for note in output.limitations)
+    assert embedded_ocr.ocr == []
+
+
+def test_ocr_failure_is_explicit_and_temporary_images_are_cleaned(embedded_ocr, tmp_path):
+    embedded_ocr.error = SourceError("no_text", "No readable text was found in this image.")
+    output = embedded_ocr.run('<main><p>Native information.</p><img src="amounts.png"></main>')
+
+    assert any("No readable text" in note for note in output.limitations)
+    assert not list(tmp_path.glob("hia-image-*"))
+    with pytest.raises(SourceError, match="content images could not be read"):
+        embedded_ocr.run('<main><img src="amounts.png"></main>')
+
+
+def test_image_ocr_text_is_inserted_as_data_not_html(embedded_ocr):
+    embedded_ocr.text = "<script>not executable</script>\nPayment amount: 250 TL."
+    output = embedded_ocr.run('<main><img src="amounts.png"></main>')
+
+    assert "250 TL" in output.units[0].markdown
+    assert "not executable" in output.units[0].markdown
+
+
+def test_image_processing_limits_warn_and_keep_available_text(embedded_ocr, monkeypatch):
+    monkeypatch.setattr(conversion, "MAX_HTML_IMAGES", 1)
+    output = embedded_ocr.run('<main><img src="first.png"><img src="second.png"></main>')
+
+    assert len(embedded_ocr.fetches) == 1
+    assert "250 TL" in output.units[0].markdown
+    assert any("1 content image(s) were not read" in note for note in output.limitations)
+
+
+def test_image_download_allowance_is_shared_and_bounded(embedded_ocr, monkeypatch):
+    data = make_png((600, 400))
+    monkeypatch.setattr(conversion, "MAX_HTML_IMAGE_TOTAL_BYTES", len(data))
+    output = embedded_ocr.run('<main><img src="first.png"><img src="second.png"></main>')
+
+    assert embedded_ocr.fetches[0][1] == len(data)
+    assert len(embedded_ocr.fetches) == 1
+    assert any("download or processing-time limit" in note for note in output.limitations)
+
+
+def test_over_limit_image_data_is_rejected_before_ocr(embedded_ocr, monkeypatch):
+    monkeypatch.setattr(conversion, "MAX_HTML_IMAGE_BYTES", 1)
+    output = embedded_ocr.run('<main><p>Native information.</p><img src="amounts.png"></main>')
+
+    assert embedded_ocr.fetches[0][1] == 1
+    assert embedded_ocr.ocr == []
+    assert any("download limit" in note for note in output.limitations)
+
+
+def test_failed_downloads_conservatively_consume_the_shared_allowance(embedded_ocr, monkeypatch):
+    monkeypatch.setattr(conversion, "MAX_HTML_IMAGE_TOTAL_BYTES", 100)
+    embedded_ocr.responses["https://example.org/program/first.png"] = SourceError(
+        "timeout", "The image download timed out."
+    )
+    output = embedded_ocr.run(
+        '<main><p>Native information.</p><img src="first.png"><img src="second.png"></main>'
+    )
+
+    assert len(embedded_ocr.fetches) == 1
+    assert any("timed out" in note for note in output.limitations)
+    assert any("1 content image(s) were not read" in note for note in output.limitations)
+
+
+def test_image_processing_deadline_prevents_additional_downloads(embedded_ocr):
+    times = iter([0.0, conversion.HTML_IMAGE_TIME_BUDGET])
+    output = embedded_ocr.run(
+        '<main><p>Native information.</p><img src="amounts.png"></main>',
+        clock=lambda: next(times),
+    )
+
+    assert embedded_ocr.fetches == []
+    assert any("processing-time limit" in note for note in output.limitations)
+
+
+def test_image_redirects_use_the_safe_fetcher_and_warn_when_blocked(embedded_ocr):
+    connected = []
+
+    def connector(target, _address, _timeout):
+        connected.append(target.url)
+        return HttpResponse(
+            302, {"location": "http://169.254.169.254/secret"}, iter([]), lambda: None
+        )
+
+    def fetch(url, max_bytes, timeout):
+        return SafeFetcher(
+            max_bytes=max_bytes,
+            max_redirects=3,
+            timeout_seconds=timeout,
+            resolver=lambda *_args: ["93.184.216.34"],
+            connector=connector,
+        ).fetch(url)
+
+    output = embedded_ocr.run(
+        '<main><p>Native information.</p><img src="amounts.png"></main>',
+        image_fetcher=fetch,
+    )
+
+    assert connected == ["https://example.org/program/amounts.png"]
+    assert any("Only public websites" in note for note in output.limitations)
+    assert embedded_ocr.ocr == []

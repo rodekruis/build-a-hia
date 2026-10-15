@@ -8,7 +8,6 @@ from factories import (
     cited,
     offer,
     question,
-    scope_response,
     session_key_of,
 )
 
@@ -178,7 +177,7 @@ def test_content_is_generated_checked_and_stored(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     assert services.contents.request(_workspace(services, key), [night.key]) == 1
-    model = FakeModel(DRAFT, scope_response(DRAFT))
+    model = FakeModel(DRAFT)
 
     make_processor(model).process_next()
 
@@ -192,70 +191,94 @@ def test_content_is_generated_checked_and_stored(services, make_processor, key):
     task = model.calls[0][0][-1]["content"]
     assert "Sub-category: Night shelter" in task
     assert "Approved HIA structure" in model.calls[0][0][-2]["content"]
+    assert len(model.calls) == 1
+    assert _workspace(services, key).model_tokens_used == 2000
 
 
-def test_scope_rejection_is_applied_before_storing_content(services, make_processor, key):
+@pytest.mark.parametrize("kind", ["wrong_programme", "uncertain_scope", "conflict"])
+def test_generation_preserves_cited_model_gaps_in_one_call(services, make_processor, key, kind):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [night.key])
-    review = {
-        "contact_conflicts": [],
-        "contact_rewrites": [],
-        "shared_contacts": [],
-        "verdicts": [
+    draft = {
+        "offers": [offer(cited("Night shelter", "S1-p1-c1"))],
+        "questions": [],
+        "issues": [
             {
-                "value_id": value_id,
-                "verdict": "other_programme",
-                "reason": "This service and its facts belong to another programme.",
+                "kind": kind,
+                "item": "Night shelter",
+                "field": "need_to_know",
+                "description": "This amount cannot safely be used for this service.",
+                "chunk_ids": ["S1-p2-c1"],
             }
-            for value_id in ("o0.name", "o0.open_weekdays", "o0.phone_numbers.0", "q0.answer")
         ],
     }
-    model = FakeModel(DRAFT, review)
+    model = FakeModel(draft)
 
     make_processor(model).process_next()
 
     state = services.contents.state(key, night.key)
     assert state.status == "done"
     result = services.contents.result(key, state)
-    assert result.offers == []
+    assert result.offers[0].need_to_know.text == ""
     assert result.questions == []
-    assert any(issue.kind == "wrong_programme" for issue in result.issues)
-    assert len(model.calls) == 2
-    assert _workspace(services, key).model_tokens_used == 3000
+    assert result.issues[0].kind == kind
+    assert result.issues[0].evidence[0].chunk_id == "S1-p2-c1"
+    assert result.issues[0].item_ref == result.offers[0].id
+    assert len(model.calls) == 1
+    assert _workspace(services, key).model_tokens_used == 2000
 
 
-@pytest.mark.parametrize(
-    "review, expected_error",
-    [
-        (
-            {
-                "verdicts": [],
-                "contact_conflicts": [],
-                "contact_rewrites": [],
-                "shared_contacts": [],
-            },
-            "programme-scope check was incomplete",
-        ),
-        (ModelError("timeout", "The AI model took too long."), "took too long"),
-    ],
-)
-def test_scope_check_failure_does_not_store_unaudited_content(
-    services, make_processor, key, review, expected_error
-):
+def test_content_model_error_does_not_store_content(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [night.key])
 
-    make_processor(FakeModel(DRAFT, review)).process_next()
+    model = FakeModel(ModelError("timeout", "The AI model took too long."))
+    make_processor(model).process_next()
 
     state = services.contents.state(key, night.key)
     assert state.status == "failed"
-    assert expected_error in state.error
+    assert "took too long" in state.error
     assert not state.blob
+    assert len(model.calls) == 1
 
 
-def test_scope_request_observes_tokens_consumed_by_the_drafting_request(
+def test_scope_only_draft_saves_empty_content_with_a_gap_instead_of_failing(
+    services, make_processor, key
+):
+    structure = _approved_structure(services, make_processor, key)
+    sub = structure.categories[0].children[0]
+    services.contents.request(_workspace(services, key), [sub.key])
+    model = FakeModel(
+        {
+            "offers": [],
+            "questions": [],
+            "issues": [
+                {
+                    "kind": "uncertain_scope",
+                    "item": sub.name,
+                    "field": "need_to_know",
+                    "description": "The sources do not establish eligibility for this programme.",
+                    "chunk_ids": ["S1-p2-c1"],
+                }
+            ],
+        }
+    )
+
+    make_processor(model).process_next()
+
+    state = services.contents.state(key, sub.key)
+    assert state.status == "done"
+    content = services.contents.result(key, state)
+    assert content.offers == []
+    assert content.questions == []
+    assert content.issues[0].kind == "uncertain_scope"
+    assert content.issues[0].evidence[0].chunk_id == "S1-p2-c1"
+    assert len(model.calls) == 1
+
+
+def test_content_finishes_when_the_single_call_consumes_the_remaining_budget(
     services, make_processor, key
 ):
     structure = _approved_structure(services, make_processor, key)
@@ -267,35 +290,33 @@ def test_scope_request_observes_tokens_consumed_by_the_drafting_request(
             result = super().parse(messages, schema)
             return replace(result, tokens=services.settings.max_session_model_tokens)
 
-    model = BudgetModel(DRAFT, scope_response(DRAFT))
+    model = BudgetModel(DRAFT)
     make_processor(model).process_next()
 
     state = services.contents.state(key, night.key)
-    assert state.status == "failed"
-    assert "used up its AI allowance" in state.error
-    assert not state.blob
+    assert state.status == "done"
+    assert state.blob
     assert len(model.calls) == 1
 
 
-def test_source_changes_during_scope_check_discard_the_result(services, make_processor, key):
+def test_source_changes_during_content_generation_discard_the_result(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [night.key])
 
-    class ChangingScopeModel(FakeModel):
+    class ChangingModel(FakeModel):
         def parse(self, messages, schema):
-            if len(self.calls) == 1:
-                services.sessions.bump_sources_version(key)
+            services.sessions.bump_sources_version(key)
             return super().parse(messages, schema)
 
-    make_processor(ChangingScopeModel(DRAFT, scope_response(DRAFT))).process_next()
+    make_processor(ChangingModel(DRAFT)).process_next()
 
     state = services.contents.state(key, night.key)
     assert state.status == "failed"
     assert not state.blob
 
 
-def test_empty_draft_does_not_need_a_scope_request(services, make_processor, key):
+def test_empty_draft_completes_in_one_call(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     night = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [night.key])
@@ -307,9 +328,7 @@ def test_empty_draft_does_not_need_a_scope_request(services, make_processor, key
     assert len(model.calls) == 1
 
 
-def test_contact_check_corrects_old_values_using_all_sources_in_the_same_two_calls(
-    services, make_processor, key
-):
+def test_preferred_contacts_and_conflict_gaps_are_saved_in_one_call(services, make_processor, key):
     for text, document_date, source_format in [
         ("Family tracing phone: 213913935.", "2013-09-27", "pdf"),
         ("Family tracing phone: 213 913 925.", "2025-10-23", "html"),
@@ -331,37 +350,27 @@ def test_contact_check_corrects_old_values_using_all_sources_in_the_same_two_cal
         "offers": [
             offer(
                 cited("Family tracing", "S2-p1-c1"),
-                phone_numbers=[cited("213913935", "S2-p1-c1")],
+                phone_numbers=[cited("213 913 925", "S3-p1-c1")],
             )
         ],
         "questions": [
             question(
                 "q1",
                 "How can I call?",
-                cited("Call 213913935.", "S2-p1-c1"),
+                cited("Call 213 913 925.", "S3-p1-c1"),
             )
         ],
-        "issues": [],
+        "issues": [
+            {
+                "kind": "conflict",
+                "item": "Family tracing",
+                "field": "phone_numbers",
+                "description": "The old flyer lists 213913935; the newer page lists 213 913 925.",
+                "chunk_ids": ["S2-p1-c1", "S3-p1-c1"],
+            }
+        ],
     }
-    review = scope_response(draft)
-    review["contact_conflicts"] = [
-        {
-            "item": "Family tracing",
-            "field": "phone_numbers",
-            "value_ids": ["o0.phone_numbers.0", "q0.answer"],
-            "candidates": [
-                cited("213913935", "S2-p1-c1"),
-                cited("213 913 925", "S3-p1-c1"),
-            ],
-        }
-    ]
-    review["contact_rewrites"] = [
-        {
-            "value_id": "q0.answer",
-            "replacement": cited("Call 213 913 925.", "S3-p1-c1"),
-        }
-    ]
-    model = FakeModel(draft, review)
+    model = FakeModel(draft)
     make_processor(model).process_next()
 
     state = services.contents.state(key, sub.key)
@@ -370,64 +379,46 @@ def test_contact_check_corrects_old_values_using_all_sources_in_the_same_two_cal
     assert content.offers[0].phone_numbers[0].text == "213 913 925"
     assert content.questions[0].answer.text == "Call 213 913 925."
     assert all(issue.kind == "conflict" for issue in content.issues)
-    assert len(model.calls) == 2
+    assert {e.chunk_id for e in content.issues[0].evidence} == {"S2-p1-c1", "S3-p1-c1"}
+    assert len(model.calls) == 1
+    sources = model.calls[0][0][1]["content"]
+    assert "213913935" in sources and "213 913 925" in sources
 
 
-@pytest.mark.parametrize("current_date", ["2025-10-23", "2013-09-27"])
-def test_inherited_contacts_still_use_contact_precedence_and_preserve_applicability_evidence(
-    services, make_processor, key, current_date
+@pytest.mark.parametrize("phone", ["213 913 925", "999999999"])
+def test_shared_contacts_are_checked_for_literal_support_without_a_review_call(
+    services, make_processor, key, phone
 ):
-    for text, document_date in [
-        ("RLF central team handles Family messages. Phone: 213913935.", "2013-09-27"),
-        ("RLF central team phone: 213 913 925.", current_date),
-    ]:
-        source = add_converted_source(services, key, [text], "RLF")
-
-        def metadata(source, document_date=document_date):
-            source.document_date = document_date
-            source.document_date_origin = "user"
-            source.format = "pdf"
-            return True
-
-        services.sources.repository.mutate(key, source.id, metadata)
+    add_converted_source(services, key, ["RLF central team handles Family messages."], "RLF")
+    add_converted_source(services, key, ["RLF central team phone: 213 913 925."], "RLF contact")
     services.sessions.approve_sources(key)
     structure = _approved_structure(services, make_processor, key)
     sub = structure.categories[0].children[0]
     services.contents.request(_workspace(services, key), [sub.key])
-    draft = {"offers": [offer(cited("Family messages", "S2-p1-c1"))], "questions": [], "issues": []}
-    review = scope_response(draft)
-    review["shared_contacts"] = [
-        {
-            "offer_index": 0,
-            "field": "phone_numbers",
-            "programme": "RLF",
-            "reason": "RLF's central team explicitly handles family messages.",
-            "applicability_chunk_ids": ["S2-p1-c1"],
-            "values": [cited("213913935", "S2-p1-c1")],
-        }
-    ]
-    review["contact_conflicts"] = [
-        {
-            "item": "RLF central team",
-            "field": "phone_numbers",
-            "value_ids": ["o0.phone_numbers.0"],
-            "candidates": [cited("213913935", "S2-p1-c1"), cited("213 913 925", "S3-p1-c1")],
-        }
-    ]
-    model = FakeModel(draft, review)
+    draft = {
+        "offers": [
+            offer(
+                cited("Family messages", "S2-p1-c1"),
+                phone_numbers=[cited(phone, "S2-p1-c1", "S3-p1-c1")],
+            )
+        ],
+        "questions": [],
+        "issues": [],
+    }
+    model = FakeModel(draft)
     make_processor(model).process_next()
     state = services.contents.state(key, sub.key)
     assert state.status == "done"
     content = services.contents.result(key, state)
-    if current_date == "2025-10-23":
+    if phone == "213 913 925":
         phone = content.offers[0].phone_numbers[0]
         assert phone.text == "213 913 925"
-        assert phone.inherited_from == "RLF"
+        assert phone.inherited_from == ""
         assert {e.chunk_id for e in phone.evidence} == {"S2-p1-c1", "S3-p1-c1"}
     else:
         assert content.offers[0].phone_numbers == []
-    assert any(issue.kind == "conflict" for issue in content.issues)
-    assert len(model.calls) == 2
+        assert any(issue.kind == "unverified" for issue in content.issues)
+    assert len(model.calls) == 1
 
 
 def test_content_is_queued_in_structure_order(services, make_processor, key):
@@ -445,9 +436,7 @@ def test_request_all_skips_current_content(services, make_processor, key):
     structure = _approved_structure(services, make_processor, key)
     workspace = _workspace(services, key)
     assert services.contents.request(workspace) == 2
-    processor = make_processor(
-        FakeModel(DRAFT, scope_response(DRAFT), DRAFT, scope_response(DRAFT))
-    )
+    processor = make_processor(FakeModel(DRAFT, DRAFT))
     processor.process_next()
     processor.process_next()
 
@@ -479,7 +468,7 @@ def test_structure_change_during_generation_fails_the_job(services, make_process
             services.structures.approve(key, version + 1)
             return super().parse(messages, schema)
 
-    make_processor(EditingModel(DRAFT, scope_response(DRAFT))).process_next()
+    make_processor(EditingModel(DRAFT)).process_next()
 
     state = services.contents.state(key, night.key)
     assert state.status == "failed"

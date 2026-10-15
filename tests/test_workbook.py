@@ -1,13 +1,16 @@
 import io
 import re
 import zipfile
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
+from factories import cited, question
 from openpyxl import load_workbook
 
 from build_a_hia.services import workbook as workbook_module
 from build_a_hia.services.assembly import assemble
+from build_a_hia.services.checks import ChunkIndex, ChunkRef, check_draft
 from build_a_hia.services.content import (
     Evidence,
     FieldValue,
@@ -15,9 +18,10 @@ from build_a_hia.services.content import (
     Issue,
     Offer,
     Question,
+    SubcategoryDraft,
 )
 from build_a_hia.services.context import ProjectContext
-from build_a_hia.services.export import _formula_errors
+from build_a_hia.services.export import _formula_errors, _structural_errors
 from build_a_hia.services.review import collect_gaps
 from build_a_hia.services.sources import Source, SourceKind, SourceStatus
 from build_a_hia.services.structure import Node, Structure
@@ -156,6 +160,86 @@ def test_hia_rows_are_literal_values_directly_after_the_headers(hia_bytes):
         "No",
     ]
     assert questions["G3"].value == "who-can-stay"
+
+
+def test_generated_chains_export_only_top_level_parents_in_the_same_subcategory():
+    structure = Structure(
+        categories=[
+            Node(
+                key="c1",
+                name="Help",
+                children=[Node(key="s1", name="First"), Node(key="s2", name="Second")],
+            )
+        ]
+    )
+    index = ChunkIndex([ChunkRef("S1-p1-c1", "s1", "S1", "Guide", 1, "", "Supported answer.")])
+    answer = cited("Supported answer.", "S1-p1-c1")
+    contents = {}
+    for key, questions in {
+        "s1": [
+            question("q3", "Grandchild?", answer, "q2"),
+            question("q2", "Child?", answer, "q1"),
+            question("q1", "Root?", answer),
+        ],
+        "s2": [question("q4", "Other?", answer, "q1")],
+    }.items():
+        contents[key] = check_draft(
+            SubcategoryDraft.model_validate({"offers": [], "questions": questions, "issues": []}),
+            index,
+            generated_on="2026-10-07",
+            prompt_version="t",
+        )
+    categories = assemble(structure, contents)
+    assert _structural_errors(categories) == []
+    exported = load_workbook(io.BytesIO(build_hia_workbook(categories, CONTEXT, EXPORTED_AT)))
+    rows = [
+        row for row in exported["Q&As"].iter_rows(min_row=2, values_only=True) if row[5] is not None
+    ]
+    assert len(rows) == 4
+    by_slug = {row[5]: row for row in rows}
+    for row in rows:
+        if row[6] is not None:
+            parent = by_slug[row[6]]
+            assert parent[1] == row[1]
+            assert parent[6] is None
+    assert {row[7]: row[6] for row in rows} == {
+        "Root?": None,
+        "Child?": "root",
+        "Grandchild?": "root",
+        "Other?": None,
+    }
+
+
+@pytest.mark.parametrize("parent_kind", ["nested", "self", "cross_subcategory", "missing"])
+def test_export_validation_rejects_invalid_question_parents(parent_kind):
+    categories = _categories()
+    root, child = categories[0].subcategories[0].questions
+    if parent_kind == "nested":
+        categories[0].subcategories[0].questions.append(
+            replace(child, slug="grandchild", parent_slug=child.slug, depth=2)
+        )
+    elif parent_kind == "self":
+        child.parent_slug = child.slug
+    elif parent_kind == "cross_subcategory":
+        categories[0].subcategories[0].questions.remove(root)
+        other = assemble(
+            Structure(
+                categories=[Node(key="c2", name="Other", children=[Node(key="s2", name="Other")])]
+            ),
+            {},
+        )[0].subcategories[0]
+        other.id = 3
+        other.questions.append(root)
+        categories[0].subcategories.append(other)
+    else:
+        child.parent_slug = "nonexistent"
+
+    errors = _structural_errors(categories)
+
+    assert any(
+        ("more than one level" if parent_kind in {"nested", "self"} else "unknown parent") in error
+        for error in errors
+    )
 
 
 @pytest.mark.parametrize("sheet", workbook_module.CONTRACT)

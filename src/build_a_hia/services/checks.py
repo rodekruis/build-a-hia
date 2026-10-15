@@ -270,11 +270,9 @@ class _Checker:
         return kept
 
 
-def _offers(
-    draft: SubcategoryDraft, checker: _Checker, inherited: dict[tuple[int, str], str]
-) -> list[Offer]:
+def _offers(draft: SubcategoryDraft, checker: _Checker) -> list[Offer]:
     offers: list[Offer] = []
-    for number, raw in enumerate(draft.offers[:MAX_OFFERS]):
+    for raw in draft.offers[:MAX_OFFERS]:
         label = clean_line(raw.name.text) or "Unnamed offer"
         offer = Offer()
         for field in OFFER_TEXT_FIELDS:
@@ -286,12 +284,6 @@ def _offers(
         offer.web_urls = checker.values(
             raw.web_urls, "web_urls", label, normalize_url, url_supported
         )
-        for (target, field), programme in inherited.items():
-            if target == number:
-                value = getattr(offer, field)
-                for entry in value if isinstance(value, list) else [value]:
-                    if entry.text:
-                        entry.inherited_from = programme
         if not offer.name.text:
             checker.issues.append(
                 Issue(
@@ -351,6 +343,23 @@ def _questions(draft: SubcategoryDraft, checker: _Checker) -> list[Question]:
                     description="Shown as a top-level question because its parent was invalid.",
                 )
             )
+    for question in questions:
+        if not question.parent_ref:
+            continue
+        parent = by_ref[question.parent_ref]
+        while parent.parent_ref:
+            parent = by_ref[parent.parent_ref]
+        if question.parent_ref != parent.ref:
+            question.parent_ref = parent.ref
+            checker.issues.append(
+                Issue(
+                    kind="structure",
+                    item=question.question,
+                    field="question",
+                    description="Moved under its top-level question because HIA supports "
+                    "only one level of follow-ups.",
+                )
+            )
     return questions
 
 
@@ -380,28 +389,29 @@ def check_draft(
     *,
     generated_on: str,
     prompt_version: str,
-    inherited_contacts: dict[tuple[int, str], str] | None = None,
 ) -> GeneratedContent:
-    """Turn a model draft into validated content that only keeps source-supported claims.
+    """Validate a model draft's citations, literal contacts and output structure.
 
     Every text field must cite at least one known passage, or it is removed. Phone numbers,
     emails and web addresses must also literally appear in the cited passages. Offers
     without a supported name are left out, item counts are capped, and questions with an
     invalid or cyclic parent become top-level. Every removal is recorded as an issue.
+    Deeper follow-ups are moved under their top-level ancestor, with a structure issue.
+    Programme applicability and semantic support are assessed during generation and staff
+    review, not independently established by these deterministic checks.
 
     Args:
         draft: Structured model output for one sub-category.
         index: The passages that were given to the model.
         generated_on: Generation date (ISO format) to store with the content.
         prompt_version: Version of the prompt that produced the draft.
-        inherited_contacts: Programme labels for independently assessed shared offer fields.
 
     Returns:
         The validated content with model and checker issues; issues are linked to the
         affected offer or question by matching name or question text.
     """
     checker = _Checker(index=index, issues=[])
-    offers = _offers(draft, checker, inherited_contacts or {})
+    offers = _offers(draft, checker)
     questions = _questions(draft, checker)
     model_issues = [
         Issue(
@@ -415,24 +425,6 @@ def check_draft(
         if clean_markdown(raw.description)
     ]
     issues = model_issues + checker.issues
-    filled = {
-        (offer.name.text.casefold(), field)
-        for offer in offers
-        for field in (*OFFER_TEXT_FIELDS, "phone_numbers", "emails", "web_urls")
-        if any(
-            entry.text and entry.inherited_from
-            for entry in (
-                getattr(offer, field)
-                if isinstance(getattr(offer, field), list)
-                else [getattr(offer, field)]
-            )
-        )
-    }
-    issues = [
-        issue
-        for issue in issues
-        if not (issue.kind == "missing" and (issue.item.casefold(), issue.field) in filled)
-    ]
     items = {offer.name.text.casefold(): offer.id for offer in offers}
     items.update({question.question.casefold(): question.ref for question in questions})
     for issue in issues:

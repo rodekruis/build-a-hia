@@ -144,14 +144,57 @@ def test_added_offers_are_marked_as_reviewer_content(content):
 
 
 def test_questions_cannot_form_cycles(content):
+    before = content.model_copy(deep=True)
     with pytest.raises(ReviewError):
-        update_question(content, "q1", "Who?", "All.", "q2")
+        update_question(content, "q1", "Changed?", "Changed.", "q2")
+    assert content == before
 
-    ref = add_question(content, "How?", "Online.", "q2")
-    assert content.questions[-1].parent_ref == "q2"
+    ref = add_question(content, "How?", "Online.", "q1")
+    assert content.questions[-1].parent_ref == "q1"
     assert content.questions[-1].question_edited
     update_question(content, ref, "How exactly?", "Online.", "")
     assert content.questions[-1].parent_ref == ""
+
+
+def test_sub_questions_cannot_be_parents(content):
+    before = content.model_copy(deep=True)
+    with pytest.raises(ReviewError, match="one level"):
+        add_question(content, "How?", "Online.", "q2")
+    assert content == before
+
+    ref = add_question(content, "How?", "Online.", "")
+    before = content.model_copy(deep=True)
+    with pytest.raises(ReviewError, match="one level"):
+        update_question(content, ref, "Changed?", "Changed.", "q2")
+    assert content == before
+
+
+def test_a_question_with_follow_ups_cannot_become_a_follow_up(content):
+    parent = add_question(content, "Where?", "Here.", "")
+    before = content.model_copy(deep=True)
+
+    with pytest.raises(ReviewError, match="follow-ups"):
+        update_question(content, "q1", "Changed?", "Changed.", parent)
+
+    assert content == before
+
+
+def test_follow_up_can_move_between_top_level_questions(content):
+    parent = add_question(content, "Where?", "Here.", "")
+
+    update_question(content, "q2", "When?", "Now.", parent)
+
+    assert content.questions[1].parent_ref == parent
+
+
+@pytest.mark.parametrize("parent", ["q1", "missing"])
+def test_invalid_parent_edits_leave_question_text_and_answer_unchanged(content, parent):
+    before = content.model_copy(deep=True)
+
+    with pytest.raises(ReviewError):
+        update_question(content, "q1", "Changed?", "Changed.", parent)
+
+    assert content == before
 
 
 def test_removing_a_question_keeps_its_follow_ups(content):
