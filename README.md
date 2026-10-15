@@ -25,7 +25,7 @@ flowchart LR
     cleanup[hia-cleanup job<br>hourly] --> storage
 ```
 
-The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry, followed by an independent programme-scope check for nonempty content drafts. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
+The web app only handles pages and quick actions. Slow work runs in Azure Container Apps Jobs started by queue messages: `hia-convert` turns sources into text with [Docling](https://github.com/docling-project/docling), and `hia-generate` sends one structure proposal or one sub-category at a time to a language model on Azure AI Foundry. Each content-generation job uses one AI call, with programme applicability, contact conflicts and explicitly shared programme contacts handled in that same draft. Deterministic checks then validate citations and literal contact values; they do not independently establish programme applicability. Staff review the content and its gaps before approval. Every request contains the full text of all approved sources, so no search index or vector database is needed. A scheduled job deletes expired sessions.
 
 ## Requirements
 

@@ -9,14 +9,11 @@ from factories import (
     cited,
     offer,
     question,
-    scope_response,
     session_key_of,
-    with_scope_reviews,
 )
 from openpyxl import load_workbook
 
 from build_a_hia.services.generation import GenerationProcessor
-from build_a_hia.services.scope import ScopeReview
 
 EMPTY_DRAFT = {"offers": [], "questions": [], "issues": []}
 
@@ -29,24 +26,16 @@ class RoutingModel(FakeModel):
         self.by_subcategory = by_subcategory
 
     def parse(self, messages, schema):
-        if schema is ScopeReview:
-            self.responses.insert(0, scope_response(self.last_draft))
-            return super().parse(messages, schema)
         task = messages[-1]["content"]
         name = next(name for name in self.by_subcategory if f"Sub-category: {name}" in task)
-        self.last_draft = self.by_subcategory[name]
-        self.responses.insert(0, self.last_draft)
+        self.responses.insert(0, self.by_subcategory[name])
         return super().parse(messages, schema)
 
 
 @pytest.fixture
 def run_jobs(services):
     def run(*responses, by_subcategory: dict[str, dict] | None = None) -> None:
-        model = (
-            RoutingModel(by_subcategory)
-            if by_subcategory
-            else FakeModel(*with_scope_reviews(responses))
-        )
+        model = RoutingModel(by_subcategory) if by_subcategory else FakeModel(*responses)
         processor = GenerationProcessor(
             table=services.table,
             blobs=services.blobs,
@@ -474,31 +463,25 @@ def test_conversion_warning_reaches_review_and_internal_workbook(generated, serv
     assert "Conversion problem" in values
 
 
-def test_scope_rejections_stay_out_of_approved_public_export_but_keep_cited_gaps(
+def test_model_scope_omissions_stay_out_of_public_export_but_keep_cited_gaps(
     generated, services, run_jobs
 ):
     client, key, night, cash = generated
     draft = {
-        "offers": [
-            offer(
-                cited("Night shelter", "S1-p1-c1"),
-                need_to_know=cited("250 TL monthly per person.", "S1-p1-c1"),
-            ),
-            offer(cited("T-SUY Projesi", "S1-p1-c1")),
+        "offers": [offer(cited("Night shelter", "S1-p1-c1"))],
+        "questions": [],
+        "issues": [
+            {
+                "kind": "wrong_programme",
+                "item": "Night shelter",
+                "field": "need_to_know",
+                "description": "250 TL monthly per person belongs to T-SUY Projesi.",
+                "chunk_ids": ["S1-p1-c1"],
+            }
         ],
-        "questions": [question("q1", "ما قيمة المساعدة؟", cited("250 ليرة شهرياً.", "S1-p1-c1"))],
-        "issues": [],
     }
-    review = scope_response(
-        draft,
-        **{
-            "o0.need_to_know": "other_programme",
-            "o1.name": "other_programme",
-            "q0.answer": "other_programme",
-        },
-    )
     client.post(f"/content/{night}/regenerate")
-    run_jobs(draft, review)
+    run_jobs(draft)
 
     assert b"Information for another programme" in client.get("/review").data
     _approve_all(client, services, key, night, cash)
@@ -530,7 +513,7 @@ def test_scope_rejections_stay_out_of_approved_public_export_but_keep_cited_gaps
     assert "Find evidence for the intended programme" in internal
 
 
-def test_contact_precedence_is_consistent_in_approved_subcategories_and_exports(
+def test_model_contact_choices_and_conflict_gaps_reach_approved_exports(
     ready_client, services, run_jobs
 ):
     client = ready_client
@@ -577,39 +560,32 @@ def test_contact_precedence_is_consistent_in_approved_subcategories_and_exports(
             "offers": [
                 offer(
                     cited(name, "S2-p1-c1"),
-                    phone_numbers=[cited("213913935", "S2-p1-c1")],
-                    emails=[cited("tracing@example.org", "S2-p1-c1")],
+                    phone_numbers=[cited("213 913 925", "S3-p1-c1")],
+                    emails=[cited("rlf@example.org", "S3-p1-c1")],
                 )
             ],
             "questions": [
                 question(
                     "q1",
                     f"How can I contact {name}?",
-                    cited("Call 213913935 or 213 913 925.", "S2-p1-c1", "S3-p1-c1"),
+                    cited("Call 213 913 925.", "S3-p1-c1"),
                 )
             ],
-            "issues": [],
+            "issues": [
+                {
+                    "kind": "conflict",
+                    "item": name,
+                    "field": field,
+                    "description": f"The flyer lists {old}; the newer web page lists {new}.",
+                    "chunk_ids": ["S2-p1-c1", "S3-p1-c1"],
+                }
+                for field, old, new in [
+                    ("phone_numbers", "213913935", "213 913 925"),
+                    ("emails", "tracing@example.org", "rlf@example.org"),
+                ]
+            ],
         }
-        review = scope_response(draft)
-        review["contact_conflicts"] = [
-            {
-                "item": "Family tracing",
-                "field": field,
-                "value_ids": targets,
-                "candidates": [cited(old, "S2-p1-c1"), cited(new, "S3-p1-c1")],
-            }
-            for field, targets, old, new in [
-                ("phone_numbers", ["o0.phone_numbers.0", "q0.answer"], "213913935", "213 913 925"),
-                ("emails", ["o0.emails.0"], "tracing@example.org", "rlf@example.org"),
-            ]
-        ]
-        review["contact_rewrites"] = [
-            {
-                "value_id": "q0.answer",
-                "replacement": cited("Call 213 913 925.", "S3-p1-c1"),
-            }
-        ]
-        scripts.extend([draft, review])
+        scripts.append(draft)
     run_jobs(*scripts)
     structure = services.structures.approved(key)[1]
     for _category, sub in structure.subcategories():
@@ -647,7 +623,7 @@ def test_contact_precedence_is_consistent_in_approved_subcategories_and_exports(
     assert "S2-p1-c1" in internal and "S3-p1-c1" in internal
 
 
-def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited_markers(
+def test_shared_contacts_in_single_call_drafts_reach_review_and_exports(
     ready_client, services, run_jobs
 ):
     client = ready_client
@@ -676,7 +652,14 @@ def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited
     scripts = []
     for name in ("Family messages", "Trace the Face"):
         draft = {
-            "offers": [offer(cited(name, "S2-p1-c1"))],
+            "offers": [
+                offer(
+                    cited(name, "S2-p1-c1"),
+                    phone_numbers=[cited("213 913 925", "S2-p1-c1", "S3-p1-c1")],
+                    emails=[cited("pesquisa@example.org", "S2-p1-c1", "S3-p1-c1")],
+                    address=cited("Central Street 1", "S2-p1-c1", "S3-p1-c1"),
+                )
+            ],
             "questions": [],
             "issues": [
                 {
@@ -686,26 +669,10 @@ def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited
                     "description": "The linked passages omit this contact.",
                     "chunk_ids": [],
                 }
-                for field in ("phone_numbers", "emails", "address", "open_weekdays")
+                for field in ("open_weekdays",)
             ],
         }
-        review = scope_response(draft)
-        review["shared_contacts"] = [
-            {
-                "offer_index": 0,
-                "field": field,
-                "programme": "RLF",
-                "reason": "The central RLF team explicitly handles this service.",
-                "applicability_chunk_ids": ["S2-p1-c1", "S3-p1-c1"],
-                "values": [cited(text, "S3-p1-c1")],
-            }
-            for field, text in [
-                ("phone_numbers", "213 913 925"),
-                ("emails", "pesquisa@example.org"),
-                ("address", "Central Street 1"),
-            ]
-        ]
-        scripts.extend([draft, review])
+        scripts.append(draft)
     run_jobs(*scripts)
     structure = services.structures.approved(key)[1]
     for _category, sub in structure.subcategories():
@@ -713,17 +680,18 @@ def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited
         assert state.status == "done"
         content = services.contents.result(key, state)
         item = content.offers[0]
-        assert item.emails[0].inherited_from == "RLF"
-        assert item.phone_numbers[0].inherited_from == "RLF"
+        assert item.emails[0].inherited_from == ""
+        assert item.phone_numbers[0].inherited_from == ""
         assert {e.chunk_id for e in item.phone_numbers[0].evidence} == {
             "S2-p1-c1",
             "S3-p1-c1",
         }
-        assert item.address.inherited_from == "RLF"
+        assert item.address.inherited_from == ""
         assert item.open_weekdays.text == ""
         assert [issue.field for issue in content.issues] == ["open_weekdays"]
         page = client.get(f"/content/{sub.key}").data
-        assert b"Inherited programme contact: RLF" in page
+        assert b"Inherited programme contact" not in page
+        assert b"213 913 925" in page
         client.post(
             f"/content/{sub.key}/approve",
             data={"blob": state.blob, "disclosure_reviewed": "y"},
@@ -749,7 +717,7 @@ def test_shared_contacts_reach_separate_offers_review_and_exports_with_inherited
     assert public.count("213 913 925") == 2
     assert "Inherited programme contact" not in public
     internal = values("review-internal.xlsx")
-    assert "Inherited programme contact: RLF" in internal
+    assert "Inherited programme contact" not in internal
     assert "S2-p1-c1" in internal
     assert "S3-p1-c1" in internal
 

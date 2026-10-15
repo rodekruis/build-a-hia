@@ -1,7 +1,7 @@
 import re
 
 import pytest
-from factories import DRAFT_FOR_ROUTES, PROPOSAL, FakeModel, session_key_of, with_scope_reviews
+from factories import DRAFT_FOR_ROUTES, PROPOSAL, FakeModel, session_key_of
 
 from build_a_hia import create_app
 from build_a_hia.config import TestConfig
@@ -11,7 +11,7 @@ from build_a_hia.services.generation import GenerationProcessor
 @pytest.fixture
 def run_jobs(services):
     def run(*responses) -> FakeModel:
-        model = FakeModel(*with_scope_reviews(responses))
+        model = FakeModel(*responses)
         processor = GenerationProcessor(
             table=services.table,
             blobs=services.blobs,

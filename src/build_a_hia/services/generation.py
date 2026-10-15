@@ -8,7 +8,6 @@ from typing import Any
 
 from .checks import ChunkIndex, ChunkRef, check_draft
 from .chunking import estimate_tokens
-from .contacts import apply_contact_review
 from .content import StructureProposal, SubcategoryDraft
 from .context import ProjectContext
 from .drafting import ContentService, StructureService
@@ -19,13 +18,10 @@ from .prompts import (
     SourceChunk,
     SourceMaterial,
     content_messages,
-    scope_messages,
     structure_messages,
 )
-from .scope import ScopeReview, ScopeReviewError, ScopeVerdict, apply_scope_review, scope_values
 from .sessions import SessionService, WorkspaceSession, utcnow
 from .settings import Settings
-from .shared_contacts import apply_shared_contacts
 from .sources import SourceRepository, SourceStatus, chunks_blob
 from .storage import BlobStore, JobQueue, NotFoundError, QueueMessage, TableStore
 from .structure import (
@@ -320,46 +316,11 @@ class GenerationProcessor:
         messages = content_messages(context, materials, structure, category, subcategory)
         draft = self._call(session, messages, SubcategoryDraft)
         self._ensure_current(session)
-        inherited = {}
-        if scope_values(draft):
-            review = self._call(
-                session,
-                scope_messages(context, materials, structure, category, subcategory, draft),
-                ScopeReview,
-            )
-            try:
-                draft = apply_scope_review(draft, review)
-                draft, inherited = apply_shared_contacts(draft, review, index)
-                known = {verdict.value_id for verdict in review.verdicts}
-                for value in scope_values(draft):
-                    if value.value_id not in known:
-                        review.verdicts.append(
-                            ScopeVerdict(
-                                value_id=value.value_id,
-                                verdict="applies",
-                                reason="Independently assessed shared programme contact.",
-                            )
-                        )
-                draft = apply_contact_review(draft, review, materials, index)
-                for shared in review.shared_contacts:
-                    field = getattr(draft.offers[shared.offer_index], shared.field)
-                    values = field if isinstance(field, list) else [field]
-                    for value in values:
-                        if value.text:
-                            value.chunk_ids = list(
-                                dict.fromkeys([*value.chunk_ids, *shared.applicability_chunk_ids])
-                            )
-            except ScopeReviewError as error:
-                raise JobFailedError(
-                    "The programme-scope check was incomplete or its contact conflict check "
-                    "or shared contact check was invalid. No new content was saved. Try again."
-                ) from error
         content = check_draft(
             draft,
             index,
             generated_on=self._clock().date().isoformat(),
             prompt_version=PROMPT_VERSION,
-            inherited_contacts=inherited,
         )
         self._ensure_current(session)
         if self._structures.state(session.key).approved_version != state.approved_version:
