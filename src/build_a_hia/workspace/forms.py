@@ -58,7 +58,7 @@ class ContextForm(FlaskForm):
 
 def _ocr_language(field_id: str) -> SelectField:
     return SelectField(
-        "Language of scanned text",
+        "Language of source",
         choices=[(code, language_label(code)) for code in OCR_LANGUAGES],
         default="en",
         id=field_id,

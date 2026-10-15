@@ -327,8 +327,8 @@ def test_web_page_details_hide_the_unused_scanned_text_language(workspace_client
     _mark(services, workspace_client, source.id, format="html", status=status)
 
     page = workspace_client.get(f"/sources/{source.id}").data
-    assert b"Scanned-text language" not in page
-    assert b"Language of scanned text" not in page
+    assert b"Source language:" not in page
+    assert b"Language of source" not in page
     response = workspace_client.post(
         f"/sources/{source.id}", data={"title": "Help page", "ocr_language": "ar"}
     )
