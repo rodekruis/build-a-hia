@@ -9,12 +9,14 @@ from flask import Blueprint, abort, flash, g, redirect, render_template, request
 from werkzeug.wrappers import Response
 
 from ..services.context import ProjectContext, default_direction
+from ..services.conversion import ocr_language_label
 from ..services.inspection import SourceError, format_label
 from ..services.languages import LANGUAGES, language_label, resolve_language
 from ..services.sessions import WorkspaceSession
 from ..services.sources import Source, markdown_blob
 from ..services.storage import NotFoundError
 from .forms import (
+    OCR_LANGUAGE_OPTIONS,
     ActionForm,
     ApproveForm,
     ContextForm,
@@ -88,6 +90,7 @@ def _render_sources(workspace: WorkspaceSession, status: int = 200, **forms: Any
         "settings": hia.settings,
         "upload_form": UploadForm(),
         "url_form": UrlForm(formdata=None),
+        "ocr_language_options": OCR_LANGUAGE_OPTIONS,
         "delete_form": ActionForm(),
         **_status_context(workspace),
     }
@@ -252,14 +255,14 @@ def source_detail(source_id: str):
         form = SourceDetailsForm(
             data={
                 "title": source.title,
-                "ocr_language": source.ocr_language,
+                "ocr_language": ocr_language_label(source.ocr_language),
                 "document_date": (
                     date.fromisoformat(source.document_date) if source.document_date else None
                 ),
             }
         )
     else:
-        form = SourceDetailsForm(data={"ocr_language": source.ocr_language})
+        form = SourceDetailsForm(data={"ocr_language": ocr_language_label(source.ocr_language)})
     if form.validate_on_submit():
         try:
             services().sources.update_metadata(
@@ -290,7 +293,8 @@ def source_detail(source_id: str):
         preview=preview,
         preview_chars=PREVIEW_CHARS,
         action_form=ActionForm(),
-        ocr_language_label=language_label(source.ocr_language),
+        ocr_language_label=ocr_language_label(source.ocr_language),
+        ocr_language_options=OCR_LANGUAGE_OPTIONS,
     ), status
 
 

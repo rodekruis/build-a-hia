@@ -407,7 +407,7 @@ class SourceService:
                 could not be queued (the source is then stored as failed).
         """
         settings = self._settings
-        validate_ocr_language(ocr_language)
+        ocr_language = validate_ocr_language(ocr_language)
         existing = self.list_for(session.key)
         self._check_source_count(existing)
         if len(data) > settings.max_file_bytes:
@@ -477,7 +477,7 @@ class SourceService:
                 ``too_many_sources``, or ``queue_unavailable`` if the job could not be queued
                 (the source is then stored as failed).
         """
-        validate_ocr_language(ocr_language)
+        ocr_language = validate_ocr_language(ocr_language)
         target = parse_url(url)
         self._check_source_count(self.list_for(session.key))
         source = self._new_source(
@@ -517,7 +517,7 @@ class SourceService:
             SourceError: If the OCR language is invalid or cannot be changed in this state.
         """
         if ocr_language is not None:
-            validate_ocr_language(ocr_language)
+            ocr_language = validate_ocr_language(ocr_language)
 
         def apply(source: Source) -> bool:
             if ocr_language is not None and ocr_language != source.ocr_language:

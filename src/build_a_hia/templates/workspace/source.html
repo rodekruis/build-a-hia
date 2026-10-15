@@ -48,6 +48,11 @@
           {% for error in form.ocr_language.errors %}<p class="error">{{ error }}</p>{% endfor %}
         {% elif source.can_retry %}
           {{ field(form.ocr_language, "Save the language before retrying. Choose the main language of scanned text.") }}
+          <datalist id="ocr-language-options">
+            {% for code, label in ocr_language_options %}
+              <option value="{{ label }}">{{ label }} · {{ code }}</option>
+            {% endfor %}
+          </datalist>
         {% else %}
           <input type="hidden" name="{{ form.ocr_language.name }}" value="{{ source.ocr_language }}">
           <p class="hint">Source language: {{ ocr_language_label }}. Cancel processing to change it; for converted sources, remove and add the source again.</p>

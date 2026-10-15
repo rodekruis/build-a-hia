@@ -33,7 +33,7 @@
           {{ upload_form.files.label }}
           {{ upload_form.files(accept=".pdf,.docx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp") }}
         </div>
-        {{ field(upload_form.ocr_language, "Used for all files in this upload. Upload different scanned languages separately. OCR does not translate text.") }}
+        {{ field(upload_form.ocr_language, "Type or select the main language of the scanned text. Upload different scanned languages separately. OCR does not translate text.") }}
         <div class="actions">
           <button type="submit" class="button">Upload</button>
         </div>
@@ -55,11 +55,16 @@
       <form method="post" action="{{ url_for('workspace.add_url') }}" novalidate>
         {{ csrf(url_form) }}
         {{ field(url_form.url) }}
-        {{ field(url_form.ocr_language, "Used only when the address is a scanned PDF or an image. Ignored for web pages. OCR does not translate text.") }}
+        {{ field(url_form.ocr_language, "Used only when the address is a scanned PDF or an image. Ignored for web pages. Type or select the main language of scanned text.") }}
         <div class="actions">
           <button type="submit" class="button">Add address</button>
         </div>
       </form>
+      <datalist id="ocr-language-options">
+        {% for code, label in ocr_language_options %}
+          <option value="{{ label }}">{{ label }} · {{ code }}</option>
+        {% endfor %}
+      </datalist>
     </section>
 
     {% include "workspace/_status.html" %}

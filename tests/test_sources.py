@@ -318,6 +318,29 @@ def test_ocr_language_is_validated_persisted_and_editable_before_retry(
     assert _sources(services, workspace_client)[1].ocr_language == "ar"
 
 
+def test_ocr_language_autocomplete_accepts_a_supported_language_name(
+    workspace_client, services, pdf_bytes
+):
+    page = workspace_client.get("/sources").data
+    assert b'type="text"' in page
+    assert b'list="ocr-language-options"' in page
+    assert b'value="Afrikaans">Afrikaans \xc2\xb7 af' in page
+    assert b'value="Korean">Korean \xc2\xb7 ko' in page
+    assert b'value="Serbian (Latin)">Serbian (Latin) \xc2\xb7 sr-Latn' in page
+
+    response = workspace_client.post(
+        "/sources/files",
+        data={
+            "files": [(io.BytesIO(pdf_bytes), "scan.pdf")],
+            "ocr_language": "Korean",
+        },
+    )
+
+    assert response.status_code == 302
+    [source] = _sources(services, workspace_client)
+    assert source.ocr_language == "ko"
+
+
 @pytest.mark.parametrize("status", [SourceStatus.CONVERTED, SourceStatus.FAILED])
 def test_web_page_details_hide_the_unused_scanned_text_language(workspace_client, services, status):
     workspace_client.post(
