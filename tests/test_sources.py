@@ -319,9 +319,7 @@ def test_ocr_language_is_validated_persisted_and_editable_before_retry(
 
 
 @pytest.mark.parametrize("status", [SourceStatus.CONVERTED, SourceStatus.FAILED])
-def test_web_page_details_hide_the_unused_scanned_text_language(
-    workspace_client, services, status
-):
+def test_web_page_details_hide_the_unused_scanned_text_language(workspace_client, services, status):
     workspace_client.post(
         "/sources/url", data={"url": "https://example.org/help", "ocr_language": "ar"}
     )
