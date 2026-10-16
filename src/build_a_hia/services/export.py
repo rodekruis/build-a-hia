@@ -68,6 +68,25 @@ def content_status(
     return state.status
 
 
+def review_status(state: ContentState | None, status: str) -> str:
+    """Combine a sub-category's generation status with its review decision.
+
+    Args:
+        state: Stored content state, or None when nothing was generated yet.
+        status: Effective generation status from `content_status`.
+
+    Returns:
+        The generation status while content is missing, generating, failed or outdated;
+        otherwise "review" until the current content is approved, then "approved", or
+        "dropped" when the reviewer left the empty sub-category out.
+    """
+    if status != "done" or state is None:
+        return status
+    if not state.approved:
+        return "review"
+    return "dropped" if state.empty_decision == "drop" else "approved"
+
+
 @dataclass
 class SubcategoryReview:
     """Review status of one sub-category of the approved structure.

@@ -9,9 +9,8 @@ Filling that sheet by hand from guidelines, documents and web pages can take day
 1. **Context**: describe the crisis, target group, locations and the output language. Generation and source-age checks automatically use today's date; there is no reference-date input. Select scanned-text languages when adding sources, not in context.
 2. **Sources**: upload PDFs, Word, Excel or image files, or add single web pages. Each source is converted to text in the background, with OCR for scanned pages.
 3. **Structure**: the AI proposes categories and sub-categories from the sources. Staff rename, move, merge or remove them, or ask the AI to revise, then approve. Merge applies immediately to the selected target, keeping its name and combining descriptions, linked passages and any sub-categories; there is no preview or confirmation step.
-4. **Content**: the AI writes the offers and questions for each sub-category in one request, assessing programme applicability, contact conflicts and shared contacts in the same draft. Facts must cite a source passage; unsupported or inapplicable information is left blank and reported as a gap. Deterministic checks validate citations and literal contact values before staff review.
-5. **Review**: staff check each sub-category against the cited evidence, edit its fields inline and approve it. Edits save automatically. Q&As support one level of follow-ups within the same sub-category. Generated deeper chains are flattened under their top-level question and flagged as structure gaps; reviewer edits and export validation prevent deeper nesting. Gaps (missing, conflicting or outdated information, failed sources) show a read-only description and suggested action, including any relevant contact.
-6. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
+4. **Content**: the AI writes the offers and questions for each sub-category in one request, assessing programme applicability, contact conflicts and shared contacts in the same draft. Facts must cite a source passage; unsupported or inapplicable information is left blank and reported as a gap. Deterministic checks validate citations and literal contact values before staff review. The same page lists every sub-category with one status, from generating to approved, and all gaps. Staff open each sub-category, check it against the cited evidence, edit its fields inline and approve it. Edits save automatically. Q&As support one level of follow-ups within the same sub-category. Generated deeper chains are flattened under their top-level question and flagged as structure gaps; reviewer edits and export validation prevent deeper nesting. Gaps (missing, conflicting or outdated information, failed sources) show a read-only description and suggested action, including any relevant contact.
+5. **Download**: `hia.xlsx` in the HIA template layout, ready to copy into the HIA sheet, and `review-internal.xlsx` with gaps, evidence and sources for internal follow-up.
 
 Work happens in a temporary, anonymous session: there are no accounts, and all documents and drafts are deleted after 2 hours of inactivity or 24 hours at the latest.
 
@@ -52,7 +51,7 @@ On OneDrive folders, set `$env:UV_LINK_MODE = "copy"` before `uv` commands to av
 Start the development server:
 
 ```powershell
-uv run python -m flask run
+uv run python -m flask run --reload
 ```
 
 In two more terminals, run the workers so queued sources are converted and AI requests are processed:

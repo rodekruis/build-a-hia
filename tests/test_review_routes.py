@@ -367,7 +367,7 @@ def test_gap_suggested_actions_are_read_only_on_overview_and_content(generated, 
         key, gap.id, status="resolved", action="Ask the desk", contact="Program coordinator"
     )
 
-    for path in ("/review", f"/content/{night}"):
+    for path in ("/content", f"/content/{night}"):
         page = client.get(path).data.decode()
         card = page.split(f'id="gap-{gap.id}"', 1)[1].split("</li>", 1)[0]
         assert "Ask the desk\nContact: Program coordinator" in card
@@ -408,10 +408,10 @@ def test_suggested_action_updates_are_not_available(generated, services, accept)
     assert services.gaps.overrides(key) == before
 
 
-def test_review_overview_lists_all_gaps_in_one_section(generated, services):
+def test_content_page_lists_all_gaps_in_one_section(generated, services):
     client, key, _night, _cash = generated
 
-    page = client.get("/review").data.decode()
+    page = client.get("/content").data.decode()
 
     assert "Review gaps" in page
     assert "Not supported by sources" in page
@@ -422,9 +422,63 @@ def test_review_overview_lists_all_gaps_in_one_section(generated, services):
     assert 'name="suggested_action"' not in gaps
 
 
-def test_review_overview_preserves_structure_order_after_approval(generated, services):
+def test_former_review_step_redirects_to_content(generated):
+    client, _key, _night, _cash = generated
+
+    response = client.get("/review")
+
+    assert response.status_code == 302
+    assert response.headers["Location"] == "/content"
+    steps = BeautifulSoup(client.get("/content").data, "html.parser").select(".steps li")
+    assert [step.get_text(strip=True) for step in steps] == [
+        "Context",
+        "Sources",
+        "Structure",
+        "Content",
+        "Download",
+    ]
+
+
+def _badges(client) -> dict[str, list[str]]:
+    page = BeautifulSoup(client.get("/content/status").data, "html.parser")
+    badges = {}
+    for row in page.select("li.source"):
+        title = row.select_one(".source-title")
+        assert title is not None
+        badges[title.get_text(strip=True)] = [b.get_text(strip=True) for b in row.select(".badge")]
+    return badges
+
+
+def test_content_list_shows_one_status_from_generated_to_approved(generated, services):
+    client, key, night, cash = generated
+    assert _badges(client) == {
+        "Night shelter": ["Needs review"],
+        "Cash assistance": ["Needs review"],
+    }
+
+    content = services.contents.result(key, _state(services, key, night))
+    client.post(
+        f"/content/{night}/offers/{content.offers[0].id}",
+        data=_offer_form(_state(services, key, night).blob),
+    )
+    assert _badges(client)["Night shelter"] == ["Needs review", "Edited"]
+
+    _approve_all(client, services, key, night, cash)
+    assert _badges(client) == {"Night shelter": ["Approved"], "Cash assistance": ["Left out"]}
+    assert b"2 of 2 reviewed" in client.get("/content/status").data
+
+
+def test_content_list_reloads_the_page_when_generation_finishes(generated):
+    client, _key, _night, _cash = generated
+
+    status = client.get("/content/status")
+
+    assert b'data-poll-reload="true"' in status.data
+
+
+def test_content_page_preserves_structure_order_after_approval(generated, services):
     client, key, night, _cash = generated
-    page = client.get("/review").data
+    page = client.get("/content").data
     assert page.index(b"Night shelter") < page.index(b"Cash assistance")
     assert b"0 of 2 reviewed" in page
 
@@ -433,9 +487,10 @@ def test_review_overview_preserves_structure_order_after_approval(generated, ser
         data={"blob": _state(services, key, night).blob, "disclosure_reviewed": "y"},
     )
 
-    page = client.get("/review").data
+    page = client.get("/content").data
     assert page.index(b"Night shelter") < page.index(b"Cash assistance")
     assert b"1 of 2 reviewed" in page
+    assert "1 sub-category still needs review" in " ".join(page.decode().split())
 
 
 @pytest.mark.parametrize("empty_first", [False, True])
@@ -454,19 +509,19 @@ def test_approval_scrolls_to_download_only_after_the_last_pending_review(
     if empty_first:
         submissions.reverse()
     for (endpoint, data), anchor in zip(
-        submissions, ("review-title", "review-actions"), strict=True
+        submissions, ("content-status", "content-actions"), strict=True
     ):
         response = client.post(endpoint, data=data)
         assert response.status_code == 302
-        assert response.headers["Location"] == f"/review#{anchor}"
-        page = BeautifulSoup(client.get("/review").data, "html.parser")
+        assert response.headers["Location"] == f"/content#{anchor}"
+        page = BeautifulSoup(client.get("/content").data, "html.parser")
         assert page.find(id=anchor) is not None
-        subcategory_links = page.select('section[aria-labelledby="review-title"] .source-title')
+        subcategory_links = page.select("#content-status .source-title")
         assert [link.get_text(strip=True) for link in subcategory_links] == [
             "Night shelter",
             "Cash assistance",
         ]
-    assert b"2 of 2 reviewed" in client.get("/review").data
+    assert b"2 of 2 reviewed" in client.get("/content").data
 
 
 def test_download_is_blocked_until_everything_is_reviewed(generated):
@@ -518,7 +573,7 @@ def test_conversion_warning_reaches_review_and_internal_workbook(generated, serv
         return True
 
     services.sources.repository.mutate(key, source.id, warn)
-    page = client.get("/review").data
+    page = client.get("/content").data
     assert b"Conversion problem" in page and limitation.encode() in page
     plan = services.exports.plan(services.sessions.get_active(key))
     gap = next(gap for gap in plan.gaps if gap.kind == "conversion")
@@ -553,7 +608,7 @@ def test_model_scope_omissions_stay_out_of_public_export_but_keep_cited_gaps(
     client.post(f"/content/{night}/regenerate")
     run_jobs(draft)
 
-    assert b"Information for another programme" in client.get("/review").data
+    assert b"Information for another programme" in client.get("/content").data
     _approve_all(client, services, key, night, cash)
     assert _state(services, key, night).approved
     client.post("/download")
@@ -862,7 +917,7 @@ def test_gap_noise_is_reduced_from_26_issues_to_four_gaps_in_review_and_export(
     assert sum(len(sub.content.issues) for sub in plan.subcategories) == 26
     assert len(plan.gaps) == 4
     assert sorted(gap.kind for gap in plan.gaps) == ["conflict", "conflict", "outdated", "undated"]
-    overview = client.get("/review").data.decode()
+    overview = client.get("/content").data.decode()
     assert "Conflicting sources: 2" in overview
     assert "Possibly outdated: 1" in overview
     assert "Source date unknown: 1" in overview

@@ -12,6 +12,8 @@ from build_a_hia.services.content import (
     Offer,
     Question,
 )
+from build_a_hia.services.drafting import ContentState
+from build_a_hia.services.export import review_status
 from build_a_hia.services.review import (
     ReviewError,
     add_offer,
@@ -418,3 +420,31 @@ def test_no_reference_date_uses_today_for_source_age(content, monkeypatch, age):
     content.issues = [Issue(id="age", kind="outdated", description="Old.", evidence=[EVIDENCE])]
     gaps = collect_gaps(_gap_categories(content), [source], {})
     assert [gap.kind for gap in gaps] == (["outdated"] if age > 365 else [])
+
+
+@pytest.mark.parametrize(
+    ("status", "approved_blob", "decision", "expected"),
+    [
+        ("missing", "", "", "missing"),
+        ("queued", "", "", "queued"),
+        ("running", "b1", "", "running"),
+        ("failed", "", "", "failed"),
+        ("outdated", "b1", "", "outdated"),
+        ("done", "", "", "review"),
+        ("done", "b0", "", "review"),
+        ("done", "b1", "", "approved"),
+        ("done", "b1", "keep", "approved"),
+        ("done", "b1", "drop", "dropped"),
+    ],
+)
+def test_review_status_combines_generation_and_approval(status, approved_blob, decision, expected):
+    state = ContentState(
+        subcategory="a1b2c3d4", status="done", blob="b1", approved_blob=approved_blob
+    )
+    state.empty_decision = decision
+
+    assert review_status(state, status) == expected
+
+
+def test_review_status_without_state_is_the_generation_status():
+    assert review_status(None, "missing") == "missing"

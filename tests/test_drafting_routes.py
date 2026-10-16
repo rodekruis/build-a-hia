@@ -247,18 +247,19 @@ def test_approval_leads_to_content_generation(drafted, services, run_jobs):
 
     page = drafted.get("/content")
     assert b"Generate content for 2 sub-categories" in page.data
-    assert b"Continue to review" not in page.data
+    assert b"Continue to download" not in page.data
 
     drafted.post("/content/generate")
     status = drafted.get("/content/status")
     assert b'data-poll-active="true"' in status.data
-    assert b"Continue to review" not in status.data
+    assert b"Continue to download" not in status.data
     run_jobs(DRAFT_FOR_ROUTES, DRAFT_FOR_ROUTES)
 
     page = drafted.get("/content")
     assert b"All sub-categories have current content" in page.data
     assert b"1 offer," in page.data
-    assert b'href="/review">Continue to review' in page.data
+    assert b"Needs review" in page.data
+    assert b'href="/download">Continue to download' in page.data
 
 
 def test_content_page_shows_evidence_and_escapes_text(drafted, services, run_jobs):

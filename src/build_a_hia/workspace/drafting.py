@@ -1,4 +1,4 @@
-"""Steps 4-6: propose and review the structure, then generate offers and Q&As."""
+"""Steps 3-4: propose and review the structure, then generate and review offers and Q&As."""
 
 import re
 from collections.abc import Callable
@@ -10,6 +10,7 @@ from werkzeug.wrappers import Response
 from ..services.assembly import assemble
 from ..services.content import FIELD_LABELS, OFFER_LIST_FIELDS, OFFER_TEXT_FIELDS, GeneratedContent
 from ..services.drafting import ContentState, DraftingError, StructureState
+from ..services.export import review_status
 from ..services.model import model_configured
 from ..services.review import collect_gaps
 from ..services.sessions import WorkspaceSession
@@ -246,12 +247,14 @@ def _content_context(workspace: WorkspaceSession) -> dict[str, Any]:
             for sub in category.children:
                 content_state = states.get(sub.key)
                 generated += bool(content_state and content_state.blob)
+                status = _content_status(content_state, state, workspace)
                 rows.append(
                     {
                         "category": category,
                         "subcategory": sub,
                         "state": content_state,
-                        "status": _content_status(content_state, state, workspace),
+                        "status": status,
+                        "review": review_status(content_state, status),
                     }
                 )
     pending = sum(row["status"] in ("missing", "failed", "outdated") for row in rows)
@@ -262,6 +265,7 @@ def _content_context(workspace: WorkspaceSession) -> dict[str, Any]:
         "rows": rows,
         "pending": pending,
         "generated": generated,
+        "reviewed": sum(row["review"] in ("approved", "dropped") for row in rows),
         "active": any(row["status"] in ("queued", "running") for row in rows),
         "model_ready": model_configured(hia.settings),
         "settings": hia.settings,
@@ -282,8 +286,14 @@ def _content_status(
 @drafting_bp.get("/content")
 @require_workspace
 def content():
-    """Show the content step with the generation status of every sub-category."""
-    return render_template("drafting/content.html", **_content_context(_workspace()))
+    """Show the content step: generation and review status of every sub-category, and gaps."""
+    workspace = _workspace()
+    context = _content_context(workspace)
+    gaps = []
+    if context["approved"] is not None:
+        plan = services().exports.plan(workspace)
+        gaps = sorted(plan.gaps, key=lambda gap: gap.status != "open")
+    return render_template("drafting/content.html", gaps=gaps, **context)
 
 
 @drafting_bp.get("/content/status")

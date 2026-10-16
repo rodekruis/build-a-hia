@@ -1,4 +1,4 @@
-"""Steps 7-8: review and edit generated content, track gaps, and download the workbooks."""
+"""Steps 4-5: edit and approve generated content, then download the workbooks."""
 
 import logging
 import re
@@ -210,11 +210,11 @@ def _review(
     flash("Content approved." if empty_decision != "drop" else "Sub-category left out.", "success")
     plan = hia.exports.plan(workspace)
     anchor = (
-        "review-actions"
+        "content-actions"
         if plan.subcategories and all(sub.approved for sub in plan.subcategories)
-        else "review-title"
+        else "content-status"
     )
-    return redirect(url_for("review.overview", _anchor=anchor))
+    return redirect(url_for("drafting.content", _anchor=anchor))
 
 
 @review_bp.post("/content/<key>/approve")
@@ -233,19 +233,9 @@ def decide_empty(key: str):
 
 
 @review_bp.get("/review")
-@require_workspace
 def overview():
-    """Show sub-categories in structure order and one list of gaps."""
-    workspace = _workspace()
-    plan = services().exports.plan(workspace)
-    return render_template(
-        "review/review.html",
-        workspace=workspace,
-        plan=plan,
-        subcategories=plan.subcategories,
-        reviewed=sum(sub.approved for sub in plan.subcategories),
-        gaps=sorted(plan.gaps, key=lambda gap: gap.status != "open"),
-    )
+    """Redirect the former review step to the content step, which now includes review."""
+    return redirect(url_for("drafting.content"))
 
 
 @review_bp.get("/download")
