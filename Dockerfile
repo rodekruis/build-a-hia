@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # OpenGL, X11 client and GLib libraries needed by Docling's PDF and image processing.
 RUN apt-get update \
