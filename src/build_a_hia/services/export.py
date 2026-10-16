@@ -68,6 +68,25 @@ def content_status(
     return state.status
 
 
+def review_status(state: ContentState | None, status: str) -> str:
+    """Combine a sub-category's generation status with its review decision.
+
+    Args:
+        state: Stored content state, or None when nothing was generated yet.
+        status: Effective generation status from `content_status`.
+
+    Returns:
+        The generation status while content is missing, generating, failed or outdated;
+        otherwise "review" until the current content is approved, then "approved", or
+        "dropped" when the reviewer left the empty sub-category out.
+    """
+    if status != "done" or state is None:
+        return status
+    if not state.approved:
+        return "review"
+    return "dropped" if state.empty_decision == "drop" else "approved"
+
+
 @dataclass
 class SubcategoryReview:
     """Review status of one sub-category of the approved structure.
@@ -137,6 +156,22 @@ class ExportPlan:
     def approved_keys(self) -> set[str]:
         """Keys of the sub-categories whose current content is approved."""
         return {sub.key for sub in self.subcategories if sub.approved}
+
+    def next_to_review(self, after: str) -> str | None:
+        """Return the next sub-category that still needs review, in structure order.
+
+        Args:
+            after: Key of the sub-category the reviewer just handled; the search starts after
+                it and wraps around to the start of the structure.
+
+        Returns:
+            The key of the first current, generated sub-category that is not approved yet,
+            or None when there is none.
+        """
+        keys = [sub.key for sub in self.subcategories]
+        start = keys.index(after) + 1 if after in keys else 0
+        ordered = self.subcategories[start:] + self.subcategories[:start]
+        return next((sub.key for sub in ordered if sub.status == "done" and not sub.approved), None)
 
 
 class ExportService:

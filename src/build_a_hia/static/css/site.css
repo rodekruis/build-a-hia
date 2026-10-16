@@ -562,7 +562,8 @@ textarea {
 }
 
 .badge-converted,
-.badge-done {
+.badge-done,
+.badge-approved {
   background: var(--green-100);
   color: var(--green-700);
 }
@@ -578,6 +579,7 @@ textarea {
 .badge-converting,
 .badge-running,
 .badge-outdated,
+.badge-review,
 .badge-warning {
   background: var(--yellow-100);
   color: var(--yellow-700);

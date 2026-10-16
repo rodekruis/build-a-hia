@@ -7,10 +7,12 @@
   <div class="workspace">
     <section class="panel" aria-labelledby="content-title">
       {{ steps(4) }}
-      <h1 id="content-title">Generate offers and questions</h1>
+      <h1 id="content-title">Generate and review the content</h1>
       <p class="lead">
         Each sub-category is written separately from all approved sources. Every fact must cite a
-        source passage; unsupported details are left blank and listed as issues to review.
+        source passage; unsupported details are left blank and listed as gaps. Open each
+        sub-category to check its content against the evidence, edit it and approve it.
+        Approving the structure did not approve the content.
       </p>
       {% if not approved %}
         <p class="warning">
@@ -41,6 +43,46 @@
 
     {% if approved %}
       {% include "drafting/_content_status.html" %}
+
+      <section class="panel" id="gaps" aria-labelledby="gaps-title">
+        <h2 id="gaps-title">Review gaps</h2>
+        <p class="lead">
+          Missing, conflicting or uncertain information, and sources that could not be read.
+          Unresolved gaps do not block the download; they are listed in the internal review workbook.
+        </p>
+        {% if gaps %}
+          <p class="meta">
+            {% for kind, items in gaps | groupby("kind_label") %}
+              {{ kind }}: {{ items | length }}{% if not loop.last %} · {% endif %}
+            {% endfor %}
+          </p>
+          <ul class="source-list">
+            {% set on_overview = true %}
+            {% for gap in gaps %}
+              {% include "review/_gap.html" %}
+            {% endfor %}
+          </ul>
+        {% else %}
+          <p class="success">No gaps found.</p>
+        {% endif %}
+        {% if generated and not active %}
+          {% set to_review = rows | selectattr("review", "equalto", "review") | list | length %}
+          {% if pending %}
+            <p class="hint">
+              {{ pending }} sub-categor{{ "y" if pending == 1 else "ies" }} still need{{ "s" if pending == 1 }}
+              content; the download stays blocked until {{ "it is" if pending == 1 else "they are" }} generated.
+            </p>
+          {% elif to_review %}
+            <p class="hint">
+              {{ to_review }} sub-categor{{ "y" if to_review == 1 else "ies" }} still need{{ "s" if to_review == 1 }}
+              review; the download stays blocked until {{ "it is" if to_review == 1 else "they are" }} approved.
+            </p>
+          {% endif %}
+          <div class="actions" id="content-actions">
+            <a class="button" href="{{ url_for('review.download') }}">Continue to download</a>
+          </div>
+        {% endif %}
+      </section>
     {% endif %}
   </div>
 {% endblock %}

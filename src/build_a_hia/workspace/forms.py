@@ -20,8 +20,13 @@ from wtforms.validators import (
     ValidationError,
 )
 
-from ..services.conversion import OCR_LANGUAGES
-from ..services.languages import MAX_LANGUAGE_INPUT, language_label, resolve_language
+from ..services.conversion import (
+    OCR_LANGUAGES,
+    ocr_language_label,
+    validate_ocr_language,
+)
+from ..services.inspection import SourceError
+from ..services.languages import MAX_LANGUAGE_INPUT, resolve_language
 from ..services.structure import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH
 
 DIRECTION_CHOICES = [
@@ -30,6 +35,12 @@ DIRECTION_CHOICES = [
     ("rtl", "Right to left"),
     ("auto", "Automatic"),
 ]
+OCR_LANGUAGE_OPTIONS = tuple(
+    sorted(
+        ((code, ocr_language_label(code)) for code in OCR_LANGUAGES),
+        key=lambda option: option[1].casefold(),
+    )
+)
 
 
 class ContextForm(FlaskForm):
@@ -56,11 +67,19 @@ class ContextForm(FlaskForm):
             )
 
 
-def _ocr_language(field_id: str) -> SelectField:
-    return SelectField(
+def _validate_ocr_language(_form: FlaskForm, field: StringField) -> None:
+    try:
+        field.data = validate_ocr_language(field.data or "")
+    except SourceError as error:
+        raise ValidationError(error.message) from error
+
+
+def _ocr_language(field_id: str) -> StringField:
+    return StringField(
         "Language of source",
-        choices=[(code, language_label(code)) for code in OCR_LANGUAGES],
-        default="en",
+        validators=[DataRequired(), _validate_ocr_language],
+        default=ocr_language_label("en"),
+        render_kw={"list": "ocr-language-options", "autocomplete": "off"},
         id=field_id,
     )
 

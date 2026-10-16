@@ -255,8 +255,31 @@ def test_ocr_cache_and_prefetch_cover_each_distinct_language_model(monkeypatch):
     converter._converters.clear()
     models.clear()
     converter.prefetch_models()
-    assert set(models) == set(conversion.OCR_LANGUAGES.values())
-    assert initialized.count("image") == len(set(conversion.OCR_LANGUAGES.values()))
+    expected_models = {
+        conversion.OCR_LANGUAGES[language] for language in conversion.OCR_PREFETCH_LANGUAGES
+    }
+    assert set(models) == expected_models
+    assert initialized.count("image") == len(expected_models)
+    for language in conversion.OCR_LANGUAGES:
+        converter._converter(paginated=True, timeout=60, with_ocr=True, ocr_language=language)
+    assert sum(key[2] for key in converter._converters) <= conversion.MAX_CACHED_OCR_CONVERTERS
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("English", "en"),
+        ("French", "fr"),
+        ("Japanese", "ja"),
+        ("Korean", "ko"),
+        ("Serbian (Latin)", "sr-Latn"),
+        ("Chinese (Traditional)", "zh-Hant"),
+        ("zh-Hant", "zh-Hant"),
+        ("ar", "ar"),
+    ],
+)
+def test_ocr_language_names_and_codes_are_normalized(value, expected):
+    assert conversion.validate_ocr_language(value) == expected
 
 
 @pytest.mark.parametrize(

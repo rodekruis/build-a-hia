@@ -8,6 +8,7 @@ timeouts, and full-page OCR retries pages with missing or sparse readable text.
 import io
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import cache
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
 
 from .chunking import ConvertedUnit, estimate_tokens
 from .inspection import IMAGE_FORMATS, SourceError, SourceFormat
+from .languages import language_label, resolve_language
 
 logger = logging.getLogger(__name__)
 
@@ -29,19 +31,86 @@ MAX_TIMEOUT = 600.0
 # Small page ranges avoid native out-of-memory errors (std::bad_alloc) on large PDFs.
 PDF_CHUNK_PAGES = 5
 MIN_READABLE_TOKENS = 30
-# Several languages share a recognizer; use engine codes, not ambiguous language aliases.
+# RapidOCR language tags supported by Docling's installed PP-OCR vocabularies.
 OCR_LANGUAGES = {
-    "en": "iso:en",
+    "af": "iso:af",
     "ar": "arabic",
-    "zh": "ch",
-    "fr": "latin",
-    "de": "latin",
-    "es": "latin",
-    "pt": "latin",
-    "nl": "latin",
-    "tr": "latin",
-    "ru": "cyrillic",
-    "uk": "cyrillic",
+    "az": "iso:az",
+    "be": "iso:be",
+    "bs": "iso:bs",
+    "ca": "iso:ca",
+    "cs": "iso:cs",
+    "cy": "iso:cy",
+    "da": "iso:da",
+    "de": "iso:de",
+    "el": "iso:el",
+    "en": "iso:en",
+    "es": "iso:es",
+    "et": "iso:et",
+    "eu": "iso:eu",
+    "fi": "iso:fi",
+    "fil": "iso:fil",
+    "fr": "iso:fr",
+    "ga": "iso:ga",
+    "gl": "iso:gl",
+    "hr": "iso:hr",
+    "hu": "iso:hu",
+    "id": "iso:id",
+    "is": "iso:is",
+    "it": "iso:it",
+    "ja": "iso:ja",
+    "kn": "iso:kn",
+    "ko": "iso:ko",
+    "ku": "iso:ku",
+    "la": "iso:la",
+    "lb": "iso:lb",
+    "lt": "iso:lt",
+    "lv": "iso:lv",
+    "mi": "iso:mi",
+    "ms": "iso:ms",
+    "mt": "iso:mt",
+    "nl": "iso:nl",
+    "no": "iso:no",
+    "oc": "iso:oc",
+    "pl": "iso:pl",
+    "pt": "iso:pt",
+    "qu": "iso:qu",
+    "rm": "iso:rm",
+    "ro": "iso:ro",
+    "ru": "iso:ru",
+    "sk": "iso:sk",
+    "sl": "iso:sl",
+    "sq": "iso:sq",
+    "sr-Latn": "iso:sr-Latn",
+    "sv": "iso:sv",
+    "sw": "iso:sw",
+    "ta": "iso:ta",
+    "te": "iso:te",
+    "th": "iso:th",
+    "tr": "iso:tr",
+    "uk": "iso:uk",
+    "uz": "iso:uz",
+    "vi": "iso:vi",
+    "zh": "iso:zh-Hans",
+    "zh-Hant": "iso:zh-Hant",
+}
+OCR_PREFETCH_LANGUAGES = ("en", "ar", "be", "el", "kn", "ko", "ta", "te", "th")
+_OCR_LANGUAGE_LABEL_OVERRIDES = {
+    "ku": "Kurdish",
+    "la": "Latin",
+    "no": "Norwegian",
+    "oc": "Occitan",
+    "rm": "Romansh",
+    "sr-Latn": "Serbian (Latin)",
+    "zh": "Chinese (Simplified)",
+    "zh-Hant": "Chinese (Traditional)",
+}
+MAX_CACHED_OCR_CONVERTERS = 4
+_OCR_LANGUAGE_CODES_BY_LABEL = {
+    label.casefold(): code
+    for code in OCR_LANGUAGES
+    for label in (language_label(code), _OCR_LANGUAGE_LABEL_OVERRIDES.get(code, ""))
+    if label
 }
 _NON_TEXT = re.compile(r"<!--.*?-->|!\[[^\]]*\]\([^)]*\)", re.DOTALL)
 _MARKDOWN_LINK = re.compile(r"\[([^\]]+)\]\([^)]*\)")
@@ -226,10 +295,26 @@ def _text_tokens(markdown: str) -> int:
     return estimate_tokens(text) if any(character.isalnum() for character in text) else 0
 
 
-def validate_ocr_language(language: str) -> None:
-    """Reject unsupported OCR languages before storing or converting a source."""
-    if language not in OCR_LANGUAGES:
-        raise SourceError("invalid_ocr_language", "Choose a supported language for scanned text.")
+def ocr_language_label(language: str) -> str:
+    """Return the user-facing name of a supported OCR language."""
+    return _OCR_LANGUAGE_LABEL_OVERRIDES.get(language, language_label(language))
+
+
+def validate_ocr_language(language: str) -> str:
+    """Return a canonical supported OCR language from its name or code."""
+    value = language.strip()
+    code = next((code for code in OCR_LANGUAGES if code.casefold() == value.casefold()), None)
+    if code is None:
+        code = _OCR_LANGUAGE_CODES_BY_LABEL.get(value.casefold())
+    if code is None:
+        resolved = resolve_language(value)
+        if resolved in OCR_LANGUAGES:
+            code = resolved
+    if code is None:
+        raise SourceError(
+            "invalid_ocr_language", "Choose a language from the supported OCR suggestions."
+        )
+    return code
 
 
 @dataclass
@@ -329,7 +414,7 @@ class DoclingConverter:
 
     def __init__(self) -> None:
         # Converters cache their loaded models, so reuse them across chunks.
-        self._converters: dict[tuple[bool, float, bool, str], Any] = {}
+        self._converters: OrderedDict[tuple[bool, float, bool, str], Any] = OrderedDict()
 
     def convert(
         self,
@@ -361,7 +446,7 @@ class DoclingConverter:
                 if a non-PDF file could not be converted; ``invalid_ocr_language`` for an
                 unsupported recognition language.
         """
-        validate_ocr_language(ocr_language)
+        ocr_language = validate_ocr_language(ocr_language)
         if source_format == SourceFormat.PDF:
             return self._convert_pdf(path, progress, ocr_language)
         output = self._convert_whole(path, source_format, progress, base_url, ocr_language)
@@ -381,9 +466,8 @@ class DoclingConverter:
         self._converter(paginated=True, timeout=MIN_TIMEOUT, with_ocr=False).initialize_pipeline(
             docling.InputFormat.PDF
         )
-        # Prefetch each distinct recognizer without retaining all loaded pipelines in memory.
-        for language in dict.fromkeys(OCR_LANGUAGES.values()):
-            code = next(code for code, model in OCR_LANGUAGES.items() if model == language)
+        # Each entry represents a distinct PP-OCR checkpoint family.
+        for code in OCR_PREFETCH_LANGUAGES:
             converter = self._converter(
                 paginated=True, timeout=MIN_TIMEOUT, with_ocr=True, ocr_language=code
             )
@@ -396,6 +480,7 @@ class DoclingConverter:
     ) -> Any:
         key = (paginated, timeout, with_ocr, OCR_LANGUAGES[ocr_language] if with_ocr else "")
         if key in self._converters:
+            self._converters.move_to_end(key)
             return self._converters[key]
         docling = _docling()
         if paginated:
@@ -416,6 +501,10 @@ class DoclingConverter:
                 allowed_formats=[docling.InputFormat.DOCX, docling.InputFormat.XLSX],
             )
         self._converters[key] = converter
+        if with_ocr:
+            ocr_keys = [cached_key for cached_key in self._converters if cached_key[2]]
+            if len(ocr_keys) > MAX_CACHED_OCR_CONVERTERS:
+                del self._converters[ocr_keys[0]]
         return converter
 
     @staticmethod

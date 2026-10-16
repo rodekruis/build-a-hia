@@ -12,6 +12,8 @@ from build_a_hia.services.content import (
     Offer,
     Question,
 )
+from build_a_hia.services.drafting import ContentState, StructureState
+from build_a_hia.services.export import ExportPlan, SubcategoryReview, review_status
 from build_a_hia.services.review import (
     ReviewError,
     add_offer,
@@ -418,3 +420,66 @@ def test_no_reference_date_uses_today_for_source_age(content, monkeypatch, age):
     content.issues = [Issue(id="age", kind="outdated", description="Old.", evidence=[EVIDENCE])]
     gaps = collect_gaps(_gap_categories(content), [source], {})
     assert [gap.kind for gap in gaps] == (["outdated"] if age > 365 else [])
+
+
+@pytest.mark.parametrize(
+    ("status", "approved_blob", "decision", "expected"),
+    [
+        ("missing", "", "", "missing"),
+        ("queued", "", "", "queued"),
+        ("running", "b1", "", "running"),
+        ("failed", "", "", "failed"),
+        ("outdated", "b1", "", "outdated"),
+        ("done", "", "", "review"),
+        ("done", "b0", "", "review"),
+        ("done", "b1", "", "approved"),
+        ("done", "b1", "keep", "approved"),
+        ("done", "b1", "drop", "dropped"),
+    ],
+)
+def test_review_status_combines_generation_and_approval(status, approved_blob, decision, expected):
+    state = ContentState(
+        subcategory="a1b2c3d4", status="done", blob="b1", approved_blob=approved_blob
+    )
+    state.empty_decision = decision
+
+    assert review_status(state, status) == expected
+
+
+def test_review_status_without_state_is_the_generation_status():
+    assert review_status(None, "missing") == "missing"
+
+
+def _plan(*subcategories: tuple[str, str, bool]) -> ExportPlan:
+    reviews = [
+        SubcategoryReview(
+            key=key,
+            category="Shelter",
+            name=key,
+            status=status,
+            state=ContentState(subcategory=key, blob="b", approved_blob="b" if approved else ""),
+            content=None,
+        )
+        for key, status, approved in subcategories
+    ]
+    return ExportPlan(StructureState(), None, reviews, [], [], [])
+
+
+def test_next_to_review_skips_approved_and_unfinished_and_wraps_around():
+    plan = _plan(
+        ("a", "done", False),
+        ("b", "done", True),
+        ("c", "done", False),
+        ("d", "failed", False),
+        ("e", "outdated", False),
+    )
+
+    assert plan.next_to_review("a") == "c"
+    assert plan.next_to_review("c") == "a"
+    assert plan.next_to_review("unknown") == "a"
+
+
+def test_next_to_review_is_none_when_nothing_needs_review():
+    plan = _plan(("a", "done", True), ("b", "running", False))
+
+    assert plan.next_to_review("a") is None

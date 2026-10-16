@@ -1,4 +1,4 @@
-"""Steps 7-8: review and edit generated content, track gaps, and download the workbooks."""
+"""Steps 4-5: edit and approve generated content, then download the workbooks."""
 
 import logging
 import re
@@ -207,20 +207,25 @@ def _review(
     except DraftingError as error:
         flash(error.message, "error")
         return _to_content(key, "approval")
-    flash("Content approved." if empty_decision != "drop" else "Sub-category left out.", "success")
+    done = "Content approved." if empty_decision != "drop" else "Sub-category left out."
     plan = hia.exports.plan(workspace)
+    next_key = plan.next_to_review(key)
+    if next_key is not None:
+        flash(f"{done} This is the next sub-category to review.", "success")
+        return _to_content(next_key)
+    flash(done, "success")
     anchor = (
-        "review-actions"
+        "content-actions"
         if plan.subcategories and all(sub.approved for sub in plan.subcategories)
-        else "review-title"
+        else "content-status"
     )
-    return redirect(url_for("review.overview", _anchor=anchor))
+    return redirect(url_for("drafting.content", _anchor=anchor))
 
 
 @review_bp.post("/content/<key>/approve")
 @require_workspace
 def approve_content(key: str):
-    """Approve current content; return to the list, or its final action when all are reviewed."""
+    """Approve current content and open the next sub-category that needs review."""
     return _review(key, BlobForm())
 
 
@@ -233,19 +238,9 @@ def decide_empty(key: str):
 
 
 @review_bp.get("/review")
-@require_workspace
 def overview():
-    """Show sub-categories in structure order and one list of gaps."""
-    workspace = _workspace()
-    plan = services().exports.plan(workspace)
-    return render_template(
-        "review/review.html",
-        workspace=workspace,
-        plan=plan,
-        subcategories=plan.subcategories,
-        reviewed=sum(sub.approved for sub in plan.subcategories),
-        gaps=sorted(plan.gaps, key=lambda gap: gap.status != "open"),
-    )
+    """Redirect the former review step to the content step, which now includes review."""
+    return redirect(url_for("drafting.content"))
 
 
 @review_bp.get("/download")

@@ -1,16 +1,22 @@
 <section class="panel" id="content-status"
          data-poll-url="{{ url_for('drafting.content_status') }}"
-         data-poll-active="{{ 'true' if active else 'false' }}">
+         data-poll-active="{{ 'true' if active else 'false' }}"
+         data-poll-reload="true">
   <h2>Sub-categories</h2>
   <div aria-live="polite">
     {% set labels = {
       "missing": "Not generated",
       "queued": "Queued",
       "running": "Generating",
-      "done": "Generated",
       "failed": "Failed",
       "outdated": "Outdated",
+      "review": "Needs review",
+      "approved": "Approved",
+      "dropped": "Left out",
     } %}
+    {% if rows %}
+      <p class="meta">{{ reviewed }} of {{ rows | length }} reviewed.</p>
+    {% endif %}
     {% if active %}
       <p class="meta">Generating in the background. This list updates automatically.</p>
     {% endif %}
@@ -24,10 +30,8 @@
             {% else %}
               <span class="source-title">{{ row.subcategory.name }}</span>
             {% endif %}
-            <span class="badge badge-{{ row.status }}">{{ labels[row.status] }}</span>
-            {% if row.state and row.state.approved %}
-              <span class="badge badge-done">{{ "Left out" if row.state.empty_decision == "drop" else "Approved" }}</span>
-            {% elif row.state and row.state.edited %}
+            <span class="badge badge-{{ row.review }}">{{ labels[row.review] }}</span>
+            {% if row.state and row.state.edited and row.review not in ("approved", "dropped") %}
               <span class="badge badge-edited">Edited</span>
             {% endif %}
           </div>
@@ -55,16 +59,5 @@
         </li>
       {% endfor %}
     </ul>
-    {% if generated and not active %}
-      <div class="source-actions">
-        <a class="button" href="{{ url_for('review.overview') }}">Continue to review</a>
-      </div>
-      {% if pending %}
-        <p class="hint">
-          {{ pending }} sub-categor{{ "y" if pending == 1 else "ies" }} still need{{ "s" if pending == 1 }}
-          content; the download stays blocked until {{ "it is" if pending == 1 else "they are" }} generated.
-        </p>
-      {% endif %}
-    {% endif %}
   </div>
 </section>
