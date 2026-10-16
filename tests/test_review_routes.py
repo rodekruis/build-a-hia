@@ -495,7 +495,7 @@ def test_content_page_preserves_structure_order_after_approval(generated, servic
 
 @pytest.mark.parametrize("empty_first", [False, True])
 @pytest.mark.parametrize("decision", ["keep", "drop"])
-def test_approval_scrolls_to_download_only_after_the_last_pending_review(
+def test_approval_opens_the_next_review_then_scrolls_to_download(
     generated, services, empty_first, decision
 ):
     client, key, night, cash = generated
@@ -508,20 +508,35 @@ def test_approval_scrolls_to_download_only_after_the_last_pending_review(
     ]
     if empty_first:
         submissions.reverse()
-    for (endpoint, data), anchor in zip(
-        submissions, ("content-status", "content-actions"), strict=True
-    ):
-        response = client.post(endpoint, data=data)
-        assert response.status_code == 302
-        assert response.headers["Location"] == f"/content#{anchor}"
-        page = BeautifulSoup(client.get("/content").data, "html.parser")
-        assert page.find(id=anchor) is not None
-        subcategory_links = page.select("#content-status .source-title")
-        assert [link.get_text(strip=True) for link in subcategory_links] == [
-            "Night shelter",
-            "Cash assistance",
-        ]
+    (first, first_data), (last, last_data) = submissions
+
+    response = client.post(first, data=first_data)
+    next_key = night if empty_first else cash
+    assert response.headers["Location"] == f"/content/{next_key}"
+    page = client.get(response.headers["Location"]).data
+    assert b"This is the next sub-category to review." in page
+
+    response = client.post(last, data=last_data)
+    assert response.headers["Location"] == "/content#content-actions"
+    page = BeautifulSoup(client.get("/content").data, "html.parser")
+    assert page.find(id="content-actions") is not None
+    subcategory_links = page.select("#content-status .source-title")
+    assert [link.get_text(strip=True) for link in subcategory_links] == [
+        "Night shelter",
+        "Cash assistance",
+    ]
     assert b"2 of 2 reviewed" in client.get("/content").data
+
+
+def test_approval_returns_to_the_list_when_the_rest_is_not_reviewable(generated, services):
+    client, key, night, cash = generated
+    client.post(f"/content/{cash}/regenerate")
+
+    response = client.post(
+        f"/content/{night}/approve", data={"blob": _state(services, key, night).blob}
+    )
+
+    assert response.headers["Location"] == "/content#content-status"
 
 
 def test_download_is_blocked_until_everything_is_reviewed(generated):

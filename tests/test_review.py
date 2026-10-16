@@ -12,8 +12,8 @@ from build_a_hia.services.content import (
     Offer,
     Question,
 )
-from build_a_hia.services.drafting import ContentState
-from build_a_hia.services.export import review_status
+from build_a_hia.services.drafting import ContentState, StructureState
+from build_a_hia.services.export import ExportPlan, SubcategoryReview, review_status
 from build_a_hia.services.review import (
     ReviewError,
     add_offer,
@@ -448,3 +448,38 @@ def test_review_status_combines_generation_and_approval(status, approved_blob, d
 
 def test_review_status_without_state_is_the_generation_status():
     assert review_status(None, "missing") == "missing"
+
+
+def _plan(*subcategories: tuple[str, str, bool]) -> ExportPlan:
+    reviews = [
+        SubcategoryReview(
+            key=key,
+            category="Shelter",
+            name=key,
+            status=status,
+            state=ContentState(subcategory=key, blob="b", approved_blob="b" if approved else ""),
+            content=None,
+        )
+        for key, status, approved in subcategories
+    ]
+    return ExportPlan(StructureState(), None, reviews, [], [], [])
+
+
+def test_next_to_review_skips_approved_and_unfinished_and_wraps_around():
+    plan = _plan(
+        ("a", "done", False),
+        ("b", "done", True),
+        ("c", "done", False),
+        ("d", "failed", False),
+        ("e", "outdated", False),
+    )
+
+    assert plan.next_to_review("a") == "c"
+    assert plan.next_to_review("c") == "a"
+    assert plan.next_to_review("unknown") == "a"
+
+
+def test_next_to_review_is_none_when_nothing_needs_review():
+    plan = _plan(("a", "done", True), ("b", "running", False))
+
+    assert plan.next_to_review("a") is None
