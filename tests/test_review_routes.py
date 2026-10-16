@@ -420,6 +420,8 @@ def test_content_page_lists_all_gaps_in_one_section(generated, services):
     assert "Night shelter ›" in gaps
     assert "Cash assistance ›" in gaps
     assert 'name="suggested_action"' not in gaps
+    assert gaps.rindex('id="gap-') < gaps.index("Continue to download")
+    assert "Continue to download" not in client.get("/content/status").data.decode()
 
 
 def test_former_review_step_redirects_to_content(generated):

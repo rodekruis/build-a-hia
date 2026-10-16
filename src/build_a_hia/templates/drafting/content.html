@@ -65,6 +65,23 @@
         {% else %}
           <p class="success">No gaps found.</p>
         {% endif %}
+        {% if generated and not active %}
+          {% set to_review = rows | selectattr("review", "equalto", "review") | list | length %}
+          {% if pending %}
+            <p class="hint">
+              {{ pending }} sub-categor{{ "y" if pending == 1 else "ies" }} still need{{ "s" if pending == 1 }}
+              content; the download stays blocked until {{ "it is" if pending == 1 else "they are" }} generated.
+            </p>
+          {% elif to_review %}
+            <p class="hint">
+              {{ to_review }} sub-categor{{ "y" if to_review == 1 else "ies" }} still need{{ "s" if to_review == 1 }}
+              review; the download stays blocked until {{ "it is" if to_review == 1 else "they are" }} approved.
+            </p>
+          {% endif %}
+          <div class="actions" id="content-actions">
+            <a class="button" href="{{ url_for('review.download') }}">Continue to download</a>
+          </div>
+        {% endif %}
       </section>
     {% endif %}
   </div>
